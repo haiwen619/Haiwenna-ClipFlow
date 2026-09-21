@@ -281,6 +281,31 @@ export function SettingsPanel({
             </div>
           </section>
 
+          {/* Section: Setup Wizard */}
+          <section>
+            <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              新手引导与向导
+            </label>
+            <div className="mt-1.5 rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-subtle-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[13px] font-semibold text-slate-800">首次运行向导</div>
+                  <div className="mt-0.5 text-xs text-slate-500">重新运行分步设置向导与忽略应用穿梭配置</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    api.openOnboardingWindow();
+                    onClose();
+                  }}
+                  className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-100 active:scale-95"
+                >
+                  打开向导
+                </button>
+              </div>
+            </div>
+          </section>
+
           {/* Error Message if any */}
           {error && (
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">

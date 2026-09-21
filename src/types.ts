@@ -15,3 +15,10 @@ export interface Settings {
   autostartEnabled: boolean;
   replaceSystemClipboard: boolean;
 }
+
+export interface RunningAppInfo {
+  name: string;
+  title: string;
+  process_name: string;
+}
+

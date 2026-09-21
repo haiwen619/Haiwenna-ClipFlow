@@ -36,6 +36,12 @@ impl ClipboardHandler for Handler {
             return CallbackResult::Next;
         }
 
+        if let Some(proc_name) = get_active_process_name() {
+            if self.store.is_app_ignored(&proc_name) {
+                return CallbackResult::Next;
+            }
+        }
+
         // small delay to let owner finish writing
         std::thread::sleep(std::time::Duration::from_millis(30));
 
@@ -95,4 +101,53 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     hex::encode(h.finalize())
+}
+
+#[cfg(target_os = "windows")]
+fn get_active_process_name() -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 1024];
+        let mut size = buf.len() as u32;
+        let res = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        );
+        let _ = CloseHandle(handle);
+        if res.is_ok() && size > 0 {
+            let path_str = String::from_utf16_lossy(&buf[..size as usize]);
+            let file_name = std::path::Path::new(&path_str)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(&path_str)
+                .to_string();
+            return Some(file_name);
+        }
+        None
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_active_process_name() -> Option<String> {
+    None
 }

@@ -115,7 +115,7 @@ pub fn run() {
                 _ => {}
             });
 
-            listener::spawn(app.handle().clone(), store);
+            listener::spawn(app.handle().clone(), store.clone());
 
             if let Some(win) = app.get_webview_window("main") {
                 let w2 = win.clone();
@@ -124,6 +124,11 @@ pub fn run() {
                         let _ = w2.hide();
                     }
                 });
+            }
+
+            // Check if onboarding has been completed
+            if !store.is_onboarding_completed() {
+                let _ = commands::open_onboarding_window(app.handle().clone());
             }
 
             Ok(())
@@ -148,6 +153,12 @@ pub fn run() {
             commands::set_listener_paused,
             commands::paste_clean_text,
             commands::open_browser_url,
+            commands::get_running_apps,
+            commands::get_ignored_apps,
+            commands::set_ignored_apps,
+            commands::is_onboarding_completed,
+            commands::set_onboarding_completed,
+            commands::open_onboarding_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

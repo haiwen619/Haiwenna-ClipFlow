@@ -52,6 +52,8 @@ impl Store {
             INSERT OR IGNORE INTO settings (key, value) VALUES ('hotkey', 'Alt+V');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('autostart_enabled', '0');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('replace_system_clipboard', '0');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('ignored_apps', '[]');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_completed', '0');
             "#,
         )?;
         conn.execute(
@@ -275,6 +277,61 @@ impl Store {
         conn.execute(
             "UPDATE settings SET value=?1 WHERE key='replace_system_clipboard'",
             [if enabled { "1" } else { "0" }],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_ignored_apps(&self) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let val: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key='ignored_apps'", [], |r| r.get(0))
+            .optional()?;
+        if let Some(json) = val {
+            if let Ok(apps) = serde_json::from_str::<Vec<String>>(&json) {
+                return Ok(apps);
+            }
+        }
+        Ok(vec![])
+    }
+
+    pub fn set_ignored_apps(&self, apps: &[String]) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let json = serde_json::to_string(apps).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('ignored_apps', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value=?1",
+            [json],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_app_ignored(&self, proc_name: &str) -> bool {
+        if proc_name.is_empty() {
+            return false;
+        }
+        let lower = proc_name.to_lowercase();
+        if let Ok(apps) = self.get_ignored_apps() {
+            return apps.iter().any(|a| a.to_lowercase() == lower);
+        }
+        false
+    }
+
+    pub fn is_onboarding_completed(&self) -> bool {
+        let conn = self.conn.lock().unwrap();
+        let val: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key='onboarding_completed'", [], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten();
+        val.as_deref() == Some("1")
+    }
+
+    pub fn set_onboarding_completed(&self, completed: bool) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('onboarding_completed', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value=?1",
+            [if completed { "1" } else { "0" }],
         )?;
         Ok(())
     }

@@ -295,3 +295,160 @@ pub fn open_browser_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct RunningAppInfo {
+    pub name: String,
+    pub title: String,
+    pub process_name: String,
+}
+
+#[tauri::command]
+pub fn get_running_apps() -> Result<Vec<RunningAppInfo>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::collections::HashSet;
+        use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM};
+        use windows::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+            IsWindowVisible,
+        };
+
+        let mut raw_windows: Vec<(HWND, String)> = Vec::new();
+
+        unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let vec_ptr = lparam.0 as *mut Vec<(HWND, String)>;
+            if IsWindowVisible(hwnd).as_bool() {
+                let len = GetWindowTextLengthW(hwnd);
+                if len > 0 && len < 256 {
+                    let mut buf = vec![0u16; (len + 1) as usize];
+                    let read = GetWindowTextW(hwnd, &mut buf);
+                    if read > 0 {
+                        let title = String::from_utf16_lossy(&buf[..read as usize]).trim().to_string();
+                        if !title.is_empty()
+                            && title != "Default IME"
+                            && title != "MSCTFIME UI"
+                            && !title.starts_with("Program Manager")
+                        {
+                            (*vec_ptr).push((hwnd, title));
+                        }
+                    }
+                }
+            }
+            BOOL(1)
+        }
+
+        unsafe {
+            let _ = EnumWindows(Some(enum_proc), LPARAM(&mut raw_windows as *mut _ as isize));
+        }
+
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
+
+        for (hwnd, title) in raw_windows {
+            let mut pid = 0u32;
+            unsafe {
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            }
+            if pid == 0 {
+                continue;
+            }
+
+            let mut process_name = String::new();
+            unsafe {
+                if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                    let mut buf = [0u16; 1024];
+                    let mut size = buf.len() as u32;
+                    if QueryFullProcessImageNameW(
+                        handle,
+                        PROCESS_NAME_FORMAT(0),
+                        windows::core::PWSTR(buf.as_mut_ptr()),
+                        &mut size,
+                    )
+                    .is_ok()
+                        && size > 0
+                    {
+                        let path_str = String::from_utf16_lossy(&buf[..size as usize]);
+                        if let Some(fname) = std::path::Path::new(&path_str).file_name().and_then(|f| f.to_str()) {
+                            process_name = fname.to_string();
+                        }
+                    }
+                    let _ = CloseHandle(handle);
+                }
+            }
+
+            if !process_name.is_empty() {
+                let lower_proc = process_name.to_lowercase();
+                if lower_proc == "clipx.exe" || lower_proc == "haiwenna-clipflow.exe" {
+                    continue;
+                }
+                if seen.insert(lower_proc) {
+                    let name = process_name
+                        .trim_end_matches(".exe")
+                        .trim_end_matches(".EXE")
+                        .to_string();
+                    result.push(RunningAppInfo {
+                        name,
+                        title,
+                        process_name,
+                    });
+                }
+            }
+        }
+
+        result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok(result)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(vec![])
+    }
+}
+
+#[tauri::command]
+pub fn get_ignored_apps(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.store.get_ignored_apps().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_ignored_apps(state: State<'_, AppState>, apps: Vec<String>) -> Result<(), String> {
+    state.store.set_ignored_apps(&apps).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn is_onboarding_completed(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.store.is_onboarding_completed())
+}
+
+#[tauri::command]
+pub fn set_onboarding_completed(state: State<'_, AppState>, completed: bool) -> Result<(), String> {
+    state.store.set_onboarding_completed(completed).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_onboarding_window(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("onboarding") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let _ = tauri::WebviewWindowBuilder::new(
+        &app,
+        "onboarding",
+        tauri::WebviewUrl::App("onboarding.html".into()),
+    )
+    .title("Haiwenna ClipFlow - 欢迎设置向导")
+    .inner_size(760.0, 540.0)
+    .center()
+    .resizable(false)
+    .decorations(true)
+    .always_on_top(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
