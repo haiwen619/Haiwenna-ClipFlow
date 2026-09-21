@@ -1,9 +1,9 @@
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Key, Nonce,
+};
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
-use chacha20poly1305::{
-    aead::{Aead, KeyInit},
-    ChaCha20Poly1305, Key, Nonce,
-};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -57,8 +57,8 @@ pub fn encrypt(key_b64: &str, plaintext: &[u8]) -> Result<(String, String)> {
         return Err(anyhow!("Key must be 32 bytes, got {}", key_bytes.len()));
     }
 
-    let key = Key::from_slice(&key_bytes);
-    let cipher = ChaCha20Poly1305::new(key);
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let cipher = Aes256Gcm::new(key);
 
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
@@ -93,8 +93,8 @@ pub fn decrypt(key_b64: &str, nonce_b64: &str, ciphertext_b64: &str) -> Result<V
         .decode(ciphertext_b64)
         .map_err(|e| anyhow!("Invalid ciphertext base64: {e}"))?;
 
-    let key = Key::from_slice(&key_bytes);
-    let cipher = ChaCha20Poly1305::new(key);
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let plaintext = cipher
@@ -103,6 +103,7 @@ pub fn decrypt(key_b64: &str, nonce_b64: &str, ciphertext_b64: &str) -> Result<V
 
     Ok(plaintext)
 }
+
 
 #[cfg(test)]
 mod tests {
