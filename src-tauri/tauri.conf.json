@@ -24,6 +24,18 @@
         "visible": false,
         "center": false,
         "shadow": true
+      },
+      {
+        "label": "onboarding",
+        "title": "Haiwenna ClipFlow - 欢迎设置向导",
+        "url": "onboarding.html",
+        "width": 760,
+        "height": 540,
+        "resizable": false,
+        "decorations": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

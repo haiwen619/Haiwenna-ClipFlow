@@ -307,36 +307,22 @@ pub fn get_running_apps() -> Result<Vec<RunningAppInfo>, String> {
     #[cfg(target_os = "windows")]
     {
         use std::collections::HashSet;
-        use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM};
+        use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, WPARAM};
         use windows::Win32::System::Threading::{
             OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
             PROCESS_QUERY_LIMITED_INFORMATION,
         };
         use windows::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-            IsWindowVisible,
+            EnumWindows, GetWindowThreadProcessId, IsWindowVisible, SendMessageTimeoutW,
+            SMTO_ABORTIFHUNG, WM_GETTEXT,
         };
 
-        let mut raw_windows: Vec<(HWND, String)> = Vec::new();
+        let mut raw_windows: Vec<HWND> = Vec::new();
 
         unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-            let vec_ptr = lparam.0 as *mut Vec<(HWND, String)>;
+            let vec_ptr = lparam.0 as *mut Vec<HWND>;
             if IsWindowVisible(hwnd).as_bool() {
-                let len = GetWindowTextLengthW(hwnd);
-                if len > 0 && len < 256 {
-                    let mut buf = vec![0u16; (len + 1) as usize];
-                    let read = GetWindowTextW(hwnd, &mut buf);
-                    if read > 0 {
-                        let title = String::from_utf16_lossy(&buf[..read as usize]).trim().to_string();
-                        if !title.is_empty()
-                            && title != "Default IME"
-                            && title != "MSCTFIME UI"
-                            && !title.starts_with("Program Manager")
-                        {
-                            (*vec_ptr).push((hwnd, title));
-                        }
-                    }
-                }
+                (*vec_ptr).push(hwnd);
             }
             BOOL(1)
         }
@@ -348,7 +334,7 @@ pub fn get_running_apps() -> Result<Vec<RunningAppInfo>, String> {
         let mut seen = HashSet::new();
         let mut result = Vec::new();
 
-        for (hwnd, title) in raw_windows {
+        for hwnd in raw_windows {
             let mut pid = 0u32;
             unsafe {
                 GetWindowThreadProcessId(hwnd, Some(&mut pid));
@@ -385,7 +371,27 @@ pub fn get_running_apps() -> Result<Vec<RunningAppInfo>, String> {
                 if lower_proc == "clipx.exe" || lower_proc == "haiwenna-clipflow.exe" {
                     continue;
                 }
+
                 if seen.insert(lower_proc) {
+                    // Safely query window title with 15ms timeout and SMTO_ABORTIFHUNG so we never freeze
+                    let mut title = String::new();
+                    unsafe {
+                        let mut title_buf = [0u16; 128];
+                        let mut res = 0usize;
+                        let _ = SendMessageTimeoutW(
+                            hwnd,
+                            WM_GETTEXT,
+                            WPARAM(title_buf.len()),
+                            LPARAM(title_buf.as_mut_ptr() as isize),
+                            SMTO_ABORTIFHUNG,
+                            15,
+                            Some(&mut res),
+                        );
+                        if res > 0 {
+                            title = String::from_utf16_lossy(&title_buf[..res]).trim().to_string();
+                        }
+                    }
+
                     let name = process_name
                         .trim_end_matches(".exe")
                         .trim_end_matches(".EXE")

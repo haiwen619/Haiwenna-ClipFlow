@@ -108,14 +108,21 @@ function OnboardingApp() {
         setIgnoredApps(apps);
       }
     }).catch(console.error);
-    loadRunningApps();
   }, []);
+
+  useEffect(() => {
+    if (step === 4) {
+      loadRunningApps();
+    }
+  }, [step]);
 
   const loadRunningApps = async () => {
     setLoadingApps(true);
     try {
       const apps = await api.getRunningApps();
-      setRunningApps(apps);
+      if (apps && apps.length > 0) {
+        setRunningApps(apps);
+      }
     } catch (e) {
       console.error(e);
     } finally {
