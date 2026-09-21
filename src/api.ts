@@ -30,6 +30,7 @@ export const api = {
   setOnboardingCompleted: (completed: boolean) =>
     invoke<void>("set_onboarding_completed", { completed }),
   openOnboardingWindow: () => invoke<void>("open_onboarding_window"),
+  finishOnboarding: () => invoke<void>("finish_onboarding"),
 };
 
 export async function onClipboardUpdated(cb: () => void): Promise<UnlistenFn> {

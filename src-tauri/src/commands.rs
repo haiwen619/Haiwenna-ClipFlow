@@ -452,3 +452,19 @@ pub fn open_onboarding_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn finish_onboarding(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .store
+        .set_onboarding_completed(true)
+        .map_err(|e| e.to_string())?;
+
+    if let Some(w) = app.get_webview_window("onboarding") {
+        let _ = w.close();
+    }
+
+    crate::show_main_window(&app, false);
+    Ok(())
+}
+
+

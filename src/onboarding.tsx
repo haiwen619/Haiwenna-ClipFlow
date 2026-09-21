@@ -231,11 +231,15 @@ function OnboardingApp() {
   const handleFinish = async () => {
     try {
       await api.setIgnoredApps(ignoredApps);
-      await api.setOnboardingCompleted(true);
-      showToast("设置完成！");
+      showToast("设置完成！正在开启体验...");
       setTimeout(async () => {
-        const win = getCurrentWebviewWindow();
-        await win.close();
+        try {
+          await api.finishOnboarding();
+        } catch (e) {
+          console.error(e);
+          const win = getCurrentWebviewWindow();
+          await win.close();
+        }
       }, 300);
     } catch (e) {
       console.error(e);
