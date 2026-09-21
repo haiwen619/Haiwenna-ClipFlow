@@ -538,4 +538,61 @@ pub fn clean_expired_history(
     Ok(count)
 }
 
+#[tauri::command]
+pub fn get_sync_status(
+    state: State<'_, AppState>,
+) -> Result<crate::sync::SyncStatusInfo, String> {
+    let identity = state.store.get_device_identity().map_err(|e| e.to_string())?;
+    let paired = state.store.get_paired_devices().map_err(|e| e.to_string())?;
+    let local_ip = crate::sync::get_local_lan_ip();
+
+    Ok(crate::sync::SyncStatusInfo {
+        sync_enabled: identity.sync_enabled,
+        device_id: identity.device_id,
+        device_name: identity.device_name,
+        paired_count: paired.len(),
+        local_ip,
+        port: crate::sync::DEFAULT_SYNC_PORT,
+    })
+}
+
+#[tauri::command]
+pub fn get_pairing_qr_data(
+    state: State<'_, AppState>,
+) -> Result<crate::crypto::PairingQrPayload, String> {
+    crate::sync::generate_pairing_payload(&state.store).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_paired_devices(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::storage::PairedDevice>, String> {
+    state.store.get_paired_devices().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_paired_device(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    state.store.remove_paired_device(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_sync_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    state.store.set_sync_enabled(enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_device_name(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    state.store.set_device_name(&name).map_err(|e| e.to_string())
+}
+
+
 

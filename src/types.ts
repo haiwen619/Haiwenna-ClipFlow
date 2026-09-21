@@ -36,4 +36,34 @@ export interface RunningAppInfo {
   process_name: string;
 }
 
+export interface PairedDevice {
+  id: string;
+  name: string;
+  platform: string;
+  sharedKey: string;
+  pairedAt: number;
+  lastActiveAt: number;
+}
+
+export interface SyncStatusInfo {
+  syncEnabled: boolean;
+  deviceId: string;
+  deviceName: string;
+  pairedCount: number;
+  localIp: string | null;
+  port: number;
+}
+
+export interface PairingQrPayload {
+  protocol: string;
+  deviceId: string;
+  deviceName: string;
+  platform: string;
+  sharedKey: string;
+  lanAddresses: string[];
+  port: number;
+  timestamp: number;
+}
+
+
 

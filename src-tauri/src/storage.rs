@@ -57,6 +57,30 @@ pub struct StorageStats {
     pub item_count: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairedDevice {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+    #[serde(rename = "sharedKey")]
+    pub shared_key: String,
+    #[serde(rename = "pairedAt")]
+    pub paired_at: i64,
+    #[serde(rename = "lastActiveAt")]
+    pub last_active_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceIdentity {
+    #[serde(rename = "deviceId")]
+    pub device_id: String,
+    #[serde(rename = "deviceName")]
+    pub device_name: String,
+    pub platform: String,
+    #[serde(rename = "syncEnabled")]
+    pub sync_enabled: bool,
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
     data_dir: PathBuf,
@@ -79,6 +103,14 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS idx_clips_created ON clips(created_at DESC);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS paired_devices (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                shared_key TEXT NOT NULL,
+                paired_at INTEGER NOT NULL,
+                last_active_at INTEGER NOT NULL
+            );
             INSERT OR IGNORE INTO settings (key, value) VALUES ('max_count', '50');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('hotkey', 'Alt+V');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('autostart_enabled', '0');
@@ -92,6 +124,9 @@ impl Store {
             INSERT OR IGNORE INTO settings (key, value) VALUES ('paste_plain_text', '0');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('retention_days', '0');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('position_mode', 'caret');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('sync_enabled', '0');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('device_id', '');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('device_name', '');
             "#,
         )?;
         conn.execute(
@@ -465,6 +500,127 @@ impl Store {
             "INSERT INTO settings (key, value) VALUES ('onboarding_completed', ?1) \
              ON CONFLICT(key) DO UPDATE SET value=?1",
             [if completed { "1" } else { "0" }],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_device_identity(&self) -> rusqlite::Result<DeviceIdentity> {
+        let conn = self.conn.lock().unwrap();
+        let get = |k: &str| -> String {
+            conn.query_row("SELECT value FROM settings WHERE key=?1", [k], |r| r.get(0))
+                .unwrap_or_default()
+        };
+
+        let mut device_id = get("device_id");
+        if device_id.is_empty() {
+            device_id = crate::crypto::generate_device_id("win");
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('device_id', ?1) \
+                 ON CONFLICT(key) DO UPDATE SET value=?1",
+                [&device_id],
+            )?;
+        }
+
+        let mut device_name = get("device_name");
+        if device_name.is_empty() {
+            device_name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows PC".into());
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('device_name', ?1) \
+                 ON CONFLICT(key) DO UPDATE SET value=?1",
+                [&device_name],
+            )?;
+        }
+
+        let sync_enabled = get("sync_enabled") == "1";
+
+        Ok(DeviceIdentity {
+            device_id,
+            device_name,
+            platform: "windows".to_string(),
+            sync_enabled,
+        })
+    }
+
+    pub fn set_device_name(&self, name: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('device_name', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value=?1",
+            [name],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_sync_enabled(&self) -> bool {
+        let conn = self.conn.lock().unwrap();
+        let val: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key='sync_enabled'", [], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten();
+        val.as_deref() == Some("1")
+    }
+
+    pub fn set_sync_enabled(&self, enabled: bool) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('sync_enabled', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value=?1",
+            [if enabled { "1" } else { "0" }],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_paired_devices(&self) -> rusqlite::Result<Vec<PairedDevice>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, platform, shared_key, paired_at, last_active_at FROM paired_devices ORDER BY last_active_at DESC"
+        )?;
+        let items = stmt
+            .query_map([], |r| {
+                Ok(PairedDevice {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    platform: r.get(2)?,
+                    shared_key: r.get(3)?,
+                    paired_at: r.get(4)?,
+                    last_active_at: r.get(5)?,
+                })
+            })?
+            .filter_map(|x| x.ok())
+            .collect();
+        Ok(items)
+    }
+
+    pub fn add_paired_device(&self, device: &PairedDevice) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO paired_devices (id, name, platform, shared_key, paired_at, last_active_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(id) DO UPDATE SET name=?2, platform=?3, shared_key=?4, last_active_at=?6",
+            params![
+                device.id,
+                device.name,
+                device.platform,
+                device.shared_key,
+                device.paired_at,
+                device.last_active_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_paired_device(&self, id: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM paired_devices WHERE id=?1", [id])?;
+        Ok(())
+    }
+
+    pub fn update_device_active(&self, id: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE paired_devices SET last_active_at=?1 WHERE id=?2",
+            params![now_ms(), id],
         )?;
         Ok(())
     }

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api } from "../api";
-import type { Settings, StorageStats } from "../types";
+import QRCode from "qrcode";
+import { api, onDevicesUpdated } from "../api";
+import type { Settings, StorageStats, SyncStatusInfo, PairedDevice, PairingQrPayload } from "../types";
 import {
   CloseIcon,
   FolderIcon,
@@ -10,6 +11,13 @@ import {
   ClockIcon,
   CrosshairIcon,
   CenterIcon,
+  SmartphoneIcon,
+  ShieldCheckIcon,
+  QrCodeIcon,
+  WifiIcon,
+  UnlinkIcon,
+  CopyIcon,
+  CheckIcon,
 } from "./Icons";
 
 const REPLACEMENT_HOTKEY = "Win+V";
@@ -65,6 +73,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
+function formatDate(ms: number): string {
+  if (!ms) return "-";
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(
+    d.getMinutes()
+  ).padStart(2, "0")}`;
+}
+
 interface SwitchToggleProps {
   checked: boolean;
   disabled?: boolean;
@@ -110,7 +126,7 @@ function SwitchToggle({
   );
 }
 
-type TabKey = "general" | "capture" | "storage";
+type TabKey = "general" | "capture" | "sync" | "storage";
 
 export function SettingsPanel({
   open,
@@ -132,6 +148,15 @@ export function SettingsPanel({
   const [statsLoading, setStatsLoading] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
+  // Sync State
+  const [syncStatus, setSyncStatus] = useState<SyncStatusInfo | null>(null);
+  const [pairedDevices, setPairedDevices] = useState<PairedDevice[]>([]);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
+  const [qrPayload, setQrPayload] = useState<PairingQrPayload | null>(null);
+  const [generatingQr, setGeneratingQr] = useState(false);
+  const [copiedToken, setCopiedToken] = useState(false);
+
   const fetchStats = async () => {
     setStatsLoading(true);
     try {
@@ -144,13 +169,37 @@ export function SettingsPanel({
     }
   };
 
+  const fetchSync = async () => {
+    try {
+      const [status, devices] = await Promise.all([
+        api.getSyncStatus(),
+        api.getPairedDevices(),
+      ]);
+      setSyncStatus(status);
+      setPairedDevices(devices);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   useEffect(() => {
     if (open) {
       api.getDataDir().then(setDataDir).catch(console.error);
       fetchStats();
+      fetchSync();
       setActionMsg(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onDevicesUpdated(() => {
+      fetchSync();
+    }).then((u) => (unlisten = u));
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const handleChangeDir = async () => {
     const selected = await openDialog({
@@ -192,6 +241,58 @@ export function SettingsPanel({
     }
   };
 
+  const handleToggleSync = async () => {
+    if (!syncStatus) return;
+    const next = !syncStatus.syncEnabled;
+    try {
+      await api.setSyncEnabled(next);
+      setSyncStatus({ ...syncStatus, syncEnabled: next });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleGenerateQr = async () => {
+    setGeneratingQr(true);
+    try {
+      const payload = await api.getPairingQrData();
+      setQrPayload(payload);
+      const jsonStr = JSON.stringify(payload);
+      const url = await QRCode.toDataURL(jsonStr, {
+        margin: 1,
+        width: 220,
+        color: {
+          dark: "#0f172a",
+          light: "#ffffff",
+        },
+      });
+      setQrCodeUrl(url);
+      setQrModalOpen(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setGeneratingQr(false);
+    }
+  };
+
+  const handleRemoveDevice = async (id: string) => {
+    try {
+      await api.removePairedDevice(id);
+      await fetchSync();
+      setActionMsg("已解除设备配对");
+      setTimeout(() => setActionMsg(null), 2000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleCopyPairingToken = () => {
+    if (!qrPayload) return;
+    navigator.clipboard.writeText(JSON.stringify(qrPayload));
+    setCopiedToken(true);
+    setTimeout(() => setCopiedToken(false), 2000);
+  };
+
   return (
     <div
       className={`fixed inset-0 z-50 transition-opacity duration-200 ${
@@ -215,7 +316,7 @@ export function SettingsPanel({
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-[15px] font-semibold text-slate-800">偏好设置</h2>
-              <p className="text-[11px] text-slate-500">个性化、捕获行为与存储优化</p>
+              <p className="text-[11px] text-slate-500">个性化、多端同步与存储优化</p>
             </div>
             <button
               type="button"
@@ -249,7 +350,21 @@ export function SettingsPanel({
                   : "hover:text-slate-900"
               }`}
             >
-              监听与行为
+              监听
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("sync");
+                fetchSync();
+              }}
+              className={`flex-1 rounded-md py-1 text-center transition-all ${
+                activeTab === "sync"
+                  ? "bg-white font-semibold text-blue-600 shadow-sm"
+                  : "hover:text-slate-900"
+              }`}
+            >
+              多端同步
             </button>
             <button
               type="button"
@@ -263,7 +378,7 @@ export function SettingsPanel({
                   : "hover:text-slate-900"
               }`}
             >
-              存储与清理
+              存储
             </button>
           </div>
         </div>
@@ -543,7 +658,142 @@ export function SettingsPanel({
             </>
           )}
 
-          {/* TAB 3: STORAGE & RETENTION */}
+          {/* TAB 3: DEVICE SYNC (E2EE) */}
+          {activeTab === "sync" && (
+            <>
+              {/* Master Sync Switch */}
+              <section>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  跨端同步开关
+                </label>
+                <div className="mt-1.5">
+                  <SwitchToggle
+                    checked={syncStatus?.syncEnabled ?? false}
+                    title="启用跨设备剪贴板同步"
+                    description="电脑复制文字或截图后，实时通过端到端加密安全同步至配对手机或平板。"
+                    onChange={handleToggleSync}
+                  />
+                </div>
+              </section>
+
+              {/* Security & Identity Card */}
+              <section>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    本机身份与安全状态
+                  </label>
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+                    <ShieldCheckIcon />
+                    <span>E2EE 零知识加密</span>
+                  </div>
+                </div>
+
+                <div className="mt-1.5 rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-subtle-sm space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-slate-500">设备名称</div>
+                    <div className="text-xs font-semibold text-slate-800">
+                      {syncStatus?.deviceName || "Windows PC"}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-slate-100 pt-2">
+                    <div className="text-xs text-slate-500">局域网 IP / 端口</div>
+                    <div className="flex items-center gap-1 font-mono text-[11px] text-slate-600">
+                      <WifiIcon className="text-blue-500" />
+                      <span>{syncStatus?.localIp || "127.0.0.1"}:{syncStatus?.port || 14220}</span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-emerald-50/80 border border-emerald-200/60 p-2 text-[11px] text-emerald-800 leading-relaxed">
+                    🔒 <strong>双向零知识保护：</strong>传输的所有数据均采用 ChaCha20-Poly1305 硬件级加密，仅配对设备持有物理密钥，中继服务器无从读取。
+                  </div>
+                </div>
+              </section>
+
+              {/* Pair New Mobile Device */}
+              <section>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  移动设备配对
+                </label>
+                <div className="mt-1.5 rounded-xl border border-blue-200/80 bg-blue-50/40 p-3.5 shadow-subtle-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[13px] font-semibold text-slate-800 flex items-center gap-1.5">
+                        <SmartphoneIcon className="text-blue-600" />
+                        <span>配对新手机 / 平板</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        生成动态二维码，使用手机 APP 扫码瞬间握手
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleGenerateQr}
+                      disabled={generatingQr}
+                      className="shrink-0 flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 active:scale-95 disabled:opacity-60"
+                    >
+                      <QrCodeIcon />
+                      <span>{generatingQr ? "生成中..." : "扫码配对"}</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              {/* Paired Devices List */}
+              <section>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  已配对设备 ({pairedDevices.length})
+                </label>
+                <div className="mt-1.5 space-y-2">
+                  {pairedDevices.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-300 p-4 text-center">
+                      <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                        <SmartphoneIcon />
+                      </div>
+                      <div className="mt-2 text-xs font-medium text-slate-600">暂无配对设备</div>
+                      <div className="mt-0.5 text-[11px] text-slate-400">
+                        点击上方「扫码配对」即可接入您的 iPhone 或 Android 设备
+                      </div>
+                    </div>
+                  ) : (
+                    pairedDevices.map((dev) => (
+                      <div
+                        key={dev.id}
+                        className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-3 shadow-subtle-sm"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                            <SmartphoneIcon />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-slate-800 truncate">
+                              {dev.name}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                              <span className="capitalize">{dev.platform}</span>
+                              <span>•</span>
+                              <span>配对于 {formatDate(dev.pairedAt)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDevice(dev.id)}
+                          title="解除配对"
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition active:scale-95"
+                        >
+                          <UnlinkIcon />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+            </>
+          )}
+
+          {/* TAB 4: STORAGE & RETENTION */}
           {activeTab === "storage" && (
             <>
               {/* Storage Stats Live Card */}
@@ -768,6 +1018,61 @@ export function SettingsPanel({
           </div>
         </div>
       </aside>
+
+      {/* QR Code Pairing Modal */}
+      {qrModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-[320px] rounded-2xl bg-white p-5 shadow-2xl border border-slate-200 text-center">
+            <button
+              type="button"
+              onClick={() => setQrModalOpen(false)}
+              className="absolute right-3.5 top-3.5 flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <CloseIcon width="16" height="16" />
+            </button>
+
+            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+              <QrCodeIcon />
+            </div>
+
+            <h3 className="mt-2.5 text-sm font-bold text-slate-800">扫描二维码配对</h3>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              使用 ClipFlow 手机 App 扫描下方二维码完成硬件协商
+            </p>
+
+            {/* QR Image Frame */}
+            <div className="mt-3.5 mx-auto flex items-center justify-center rounded-xl bg-white p-2.5 border border-slate-200 shadow-sm w-[210px] h-[210px]">
+              {qrCodeUrl ? (
+                <img src={qrCodeUrl} alt="Pairing QR" className="w-full h-full rounded-lg" />
+              ) : (
+                <div className="text-xs text-slate-400">正在生成中...</div>
+              )}
+            </div>
+
+            <div className="mt-3 text-[11px] text-slate-400 font-mono">
+              IP: {qrPayload?.lanAddresses[0] || "127.0.0.1"}:{qrPayload?.port || 14220}
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={handleCopyPairingToken}
+                className="flex-1 flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-slate-50 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 active:scale-95"
+              >
+                {copiedToken ? <CheckIcon className="text-emerald-500" /> : <CopyIcon />}
+                <span>{copiedToken ? "已复制密文 Token" : "复制配对代码"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrModalOpen(false)}
+                className="flex-1 rounded-xl bg-blue-600 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 active:scale-95"
+              >
+                完成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

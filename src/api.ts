@@ -34,6 +34,12 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
   getStorageStats: () => invoke<import("./types").StorageStats>("get_storage_stats"),
   cleanExpiredHistory: (days: number) => invoke<number>("clean_expired_history", { days }),
+  getSyncStatus: () => invoke<import("./types").SyncStatusInfo>("get_sync_status"),
+  getPairingQrData: () => invoke<import("./types").PairingQrPayload>("get_pairing_qr_data"),
+  getPairedDevices: () => invoke<import("./types").PairedDevice[]>("get_paired_devices"),
+  removePairedDevice: (id: string) => invoke<void>("remove_paired_device", { id }),
+  setSyncEnabled: (enabled: boolean) => invoke<void>("set_sync_enabled", { enabled }),
+  setDeviceName: (name: string) => invoke<void>("set_device_name", { name }),
 };
 
 export async function onClipboardUpdated(cb: () => void): Promise<UnlistenFn> {
@@ -43,3 +49,8 @@ export async function onClipboardUpdated(cb: () => void): Promise<UnlistenFn> {
 export async function onOpenSettings(cb: () => void): Promise<UnlistenFn> {
   return listen("app://open-settings", cb);
 }
+
+export async function onDevicesUpdated(cb: () => void): Promise<UnlistenFn> {
+  return listen("sync://devices-updated", cb);
+}
+

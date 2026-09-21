@@ -8,14 +8,17 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 mod commands;
+pub mod crypto;
 mod focus;
 mod hotkey;
 mod listener;
 mod paste;
 mod replacement_hotkey;
 mod storage;
+pub mod sync;
 
 use commands::AppState;
+
 
 const OPEN_SETTINGS_EVENT: &str = "app://open-settings";
 const TRAY_ID: &str = "clipx-tray";
@@ -116,6 +119,7 @@ pub fn run() {
             });
 
             listener::spawn(app.handle().clone(), store.clone());
+            sync::start_sync_server(app.handle().clone(), store.clone());
 
             if let Some(win) = app.get_webview_window("main") {
                 let w2 = win.clone();
@@ -163,6 +167,12 @@ pub fn run() {
             commands::save_settings,
             commands::get_storage_stats,
             commands::clean_expired_history,
+            commands::get_sync_status,
+            commands::get_pairing_qr_data,
+            commands::get_paired_devices,
+            commands::remove_paired_device,
+            commands::set_sync_enabled,
+            commands::set_device_name,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

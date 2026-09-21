@@ -112,6 +112,13 @@ impl Handler {
             let _ = self.store.trim(s.max_count);
             let _ = self.store.clean_expired_history(s.retention_days);
         }
+        if self.store.is_sync_enabled() {
+            if let Ok(items) = self.store.get_history(1) {
+                if let Some(latest) = items.first() {
+                    crate::sync::broadcast_sync_item(&self.store, latest);
+                }
+            }
+        }
         let _ = self.app.emit("clipboard://updated", ());
     }
 }
