@@ -19,6 +19,10 @@ export const api = {
   getDataDir: () => invoke<string>("get_data_dir"),
   openDataDir: () => invoke<void>("open_data_dir"),
   changeDataDir: (newDir: string) => invoke<void>("change_data_dir", { newDir }),
+  isListenerPaused: () => invoke<boolean>("is_listener_paused"),
+  setListenerPaused: (paused: boolean) => invoke<boolean>("set_listener_paused", { paused }),
+  pasteCleanText: (text: string) => invoke<void>("paste_clean_text", { text }),
+  openBrowserUrl: (url: string) => invoke<void>("open_browser_url", { url }),
 };
 
 export async function onClipboardUpdated(cb: () => void): Promise<UnlistenFn> {

@@ -28,6 +28,8 @@ export default function App() {
   const [items, setItems] = useState<ClipItem[]>([]);
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<CategoryFilter>("all");
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [draftSettings, setDraftSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -63,6 +65,7 @@ export default function App() {
   useEffect(() => {
     refresh();
     loadSettings();
+    api.isListenerPaused().then(setIsPaused).catch(console.error);
 
     let unlistenClipboard: (() => void) | undefined;
     let unlistenSettings: (() => void) | undefined;
@@ -77,10 +80,12 @@ export default function App() {
 
     const onFocus = () => {
       refresh();
+      api.isListenerPaused().then(setIsPaused).catch(console.error);
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         refresh();
+        api.isListenerPaused().then(setIsPaused).catch(console.error);
       }
     };
 
@@ -93,25 +98,6 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadSettings, refresh]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (settingsOpen) {
-          setSettingsOpen(false);
-          setSettingsError(null);
-          setDraftSettings(settings);
-        } else {
-          api.hideWindow();
-        }
-      }
-    };
-
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [settings, settingsOpen]);
 
   // Combined Query + Category Filter
   const normalizedQuery = query.trim().toLowerCase();
@@ -129,6 +115,18 @@ export default function App() {
   });
 
   const pinnedCount = items.filter((item) => item.pinned).length;
+
+  // Reset focus when query or filter changes
+  useEffect(() => {
+    setFocusedIndex(0);
+  }, [query, activeFilter]);
+
+  // Ensure focusedIndex is within bounds
+  useEffect(() => {
+    if (focusedIndex >= filteredItems.length && filteredItems.length > 0) {
+      setFocusedIndex(filteredItems.length - 1);
+    }
+  }, [filteredItems.length, focusedIndex]);
 
   const handlePaste = async (id: number) => {
     await api.pasteItem(id);
@@ -151,6 +149,106 @@ export default function App() {
       api.hideWindow();
     }, 250);
   };
+
+  const handlePasteClean = async (text: string) => {
+    try {
+      await api.pasteCleanText(text);
+      showToast("已纯文本格式粘贴");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTogglePause = async () => {
+    try {
+      const next = !isPaused;
+      await api.setListenerPaused(next);
+      setIsPaused(next);
+      showToast(next ? "已暂停监听（隐私模式开启）" : "已恢复监听");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Keyboard navigation & quick actions
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          setSettingsError(null);
+          setDraftSettings(settings);
+        } else {
+          api.hideWindow();
+        }
+        return;
+      }
+
+      if (settingsOpen) return;
+
+      const isInputFocused =
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedIndex((i) => Math.min(filteredItems.length - 1, i + 1));
+        return;
+      }
+
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+
+      if (e.key === "Enter") {
+        if (filteredItems[focusedIndex]) {
+          e.preventDefault();
+          handlePaste(filteredItems[focusedIndex].id);
+        }
+        return;
+      }
+
+      // Single-key actions when not typing in an input
+      if (!isInputFocused) {
+        if (/^[1-9]$/.test(e.key)) {
+          const idx = Number(e.key) - 1;
+          if (filteredItems[idx]) {
+            e.preventDefault();
+            handlePaste(filteredItems[idx].id);
+          }
+          return;
+        }
+
+        const currentItem = filteredItems[focusedIndex];
+        if (!currentItem) return;
+
+        if (e.key === "p" || e.key === "P") {
+          e.preventDefault();
+          handleTogglePin(currentItem.id);
+          return;
+        }
+
+        if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          handleDelete(currentItem.id);
+          return;
+        }
+
+        if (e.key === "c" || e.key === "C") {
+          e.preventDefault();
+          handleCopy(currentItem.id);
+          return;
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [settings, settingsOpen, filteredItems, focusedIndex]);
 
   const handleClear = async () => {
     await api.clearAll();
@@ -278,24 +376,28 @@ export default function App() {
           query={query}
           totalCount={items.length}
           pinnedCount={pinnedCount}
+          isPaused={isPaused}
           activeFilter={activeFilter}
           onFilterChange={setActiveFilter}
           onQueryChange={setQuery}
           onOpenSettings={handleOpenSettings}
           onClear={handleClear}
+          onTogglePause={handleTogglePause}
         />
 
         <ClipList
           items={filteredItems}
           hasQuery={normalizedQuery.length > 0}
+          focusedIndex={focusedIndex}
           onPaste={handlePaste}
           onDelete={handleDelete}
           onTogglePin={handleTogglePin}
           onCopy={handleCopy}
+          onPasteClean={handlePasteClean}
           onPreview={(src) => {
             new WebviewWindow("image-preview", {
               url: `preview.html?src=${encodeURIComponent(src)}`,
-              title: "ClipX - 图片预览",
+              title: "ClipFlow - 图片预览",
               width: 1024,
               height: 768,
               center: true,

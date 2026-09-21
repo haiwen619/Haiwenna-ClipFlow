@@ -254,3 +254,44 @@ pub(crate) fn set_windows_clipboard_history(enabled: bool) -> Result<(), String>
         Err("修改 Windows 剪贴板历史失败".into())
     }
 }
+
+#[tauri::command]
+pub fn is_listener_paused() -> Result<bool, String> {
+    Ok(crate::listener::is_paused())
+}
+
+#[tauri::command]
+pub fn set_listener_paused(paused: bool) -> Result<bool, String> {
+    crate::listener::set_paused(paused);
+    Ok(crate::listener::is_paused())
+}
+
+#[tauri::command]
+pub fn paste_clean_text(app: AppHandle, text: String) -> Result<(), String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    cb.set_text(text).map_err(|e| e.to_string())?;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    std::thread::spawn(|| {
+        crate::replacement_hotkey::reset_state();
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        crate::focus::restore_foreground_window();
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let _ = crate::paste::send_ctrl_v();
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_browser_url(url: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("Invalid URL protocol".into());
+    }
+    std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &url])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+

@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { SearchIcon, SettingsIcon, TrashIcon, CloseIcon } from "./Icons";
+import { SearchIcon, SettingsIcon, TrashIcon, CloseIcon, ShieldOffIcon } from "./Icons";
 
 export type CategoryFilter = "all" | "text" | "image" | "pinned";
 
@@ -7,11 +7,13 @@ interface Props {
   query: string;
   totalCount: number;
   pinnedCount: number;
+  isPaused: boolean;
   activeFilter: CategoryFilter;
   onFilterChange: (filter: CategoryFilter) => void;
   onQueryChange: (value: string) => void;
   onOpenSettings: () => void;
   onClear: () => void;
+  onTogglePause: () => void;
 }
 
 const TABS: { id: CategoryFilter; label: string }[] = [
@@ -25,19 +27,21 @@ export function Header({
   query,
   totalCount,
   pinnedCount,
+  isPaused,
   activeFilter,
   onFilterChange,
   onQueryChange,
   onOpenSettings,
   onClear,
+  onTogglePause,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <header className="relative z-10 select-none border-b border-slate-200/80 bg-white/80 backdrop-blur-md px-4 pt-3.5 pb-2.5">
       {/* Top Bar: Brand, Stats & Action Buttons */}
-      <div className="mb-2.5 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 min-w-0" data-tauri-drag-region>
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0" data-tauri-drag-region>
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white shadow-[0_2px_8px_rgba(37,99,235,0.3)]" data-tauri-drag-region>
             <svg
               width="15"
@@ -54,15 +58,15 @@ export function Header({
             </svg>
           </div>
           <div className="min-w-0" data-tauri-drag-region>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-[14px] font-semibold tracking-[-0.01em] text-slate-800" data-tauri-drag-region>
                 ClipFlow
               </span>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 tabular-nums">
+              <span className="rounded-full bg-slate-100 px-1.5 py-0.2 text-[10px] font-medium text-slate-500 tabular-nums">
                 {totalCount}
               </span>
               {pinnedCount > 0 && (
-                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600 tabular-nums">
+                <span className="rounded-full bg-blue-50 px-1.5 py-0.2 text-[10px] font-medium text-blue-600 tabular-nums">
                   {pinnedCount} 置顶
                 </span>
               )}
@@ -70,13 +74,40 @@ export function Header({
           </div>
         </div>
 
-        {/* Action Buttons with Emil-style micro-interactions */}
+        {/* Top Right: Privacy Guard & Actions */}
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* Privacy Guard (Pause listener) */}
+          <button
+            type="button"
+            onClick={onTogglePause}
+            title={isPaused ? "当前已暂停监听（隐私模式），点击恢复" : "点击开启隐私模式（临时暂停监听，不记录新复制）"}
+            className={`flex h-7 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-medium transition-all duration-150 active:scale-[0.96] ${
+              isPaused
+                ? "border-amber-300 bg-amber-50 text-amber-800 shadow-sm animate-pulse"
+                : "border-slate-200/70 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+            }`}
+          >
+            {isPaused ? (
+              <>
+                <ShieldOffIcon className="text-amber-600" />
+                <span>隐私模式</span>
+              </>
+            ) : (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span className="text-slate-600">监听中</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={onOpenSettings}
             title="偏好设置"
             aria-label="设置"
-            className="group flex h-7.5 items-center gap-1.5 rounded-lg border border-slate-200/70 bg-white px-2.5 text-xs font-medium text-slate-600 shadow-subtle-sm transition-all duration-150 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 active:scale-[0.96]"
+            className="group flex h-7 items-center gap-1 rounded-lg border border-slate-200/70 bg-white px-2 text-xs font-medium text-slate-600 shadow-subtle-sm transition-all duration-150 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 active:scale-[0.96]"
           >
             <SettingsIcon className="text-slate-400 transition-colors group-hover:text-slate-600" />
             <span>设置</span>
@@ -85,7 +116,7 @@ export function Header({
             onClick={onClear}
             title="清空非置顶记录"
             aria-label="清空记录"
-            className="group flex h-7.5 items-center gap-1.5 rounded-lg border border-slate-200/70 bg-white px-2.5 text-xs font-medium text-slate-600 shadow-subtle-sm transition-all duration-150 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-[0.96]"
+            className="group flex h-7 items-center gap-1 rounded-lg border border-slate-200/70 bg-white px-2 text-xs font-medium text-slate-600 shadow-subtle-sm transition-all duration-150 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-[0.96]"
           >
             <TrashIcon className="text-slate-400 transition-colors group-hover:text-rose-500" />
             <span>清空</span>
@@ -124,9 +155,12 @@ export function Header({
             <CloseIcon width="12" height="12" />
           </button>
         ) : (
-          <kbd className="hidden sm:inline-flex items-center rounded border border-slate-200/70 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-400 shadow-sm">
-            ESC
-          </kbd>
+          <div className="flex items-center gap-1.5">
+            <span className="hidden sm:inline-block text-[10px] text-slate-400">↑↓ 选择 · ↵ 粘贴</span>
+            <kbd className="hidden sm:inline-flex items-center rounded border border-slate-200/70 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-400 shadow-sm">
+              ESC
+            </kbd>
+          </div>
         )}
       </div>
 

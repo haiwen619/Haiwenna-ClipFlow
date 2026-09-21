@@ -2,8 +2,19 @@ use crate::storage::Store;
 use clipboard_master::{CallbackResult, ClipboardHandler, Master};
 use sha2::{Digest, Sha256};
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+
+pub static PAUSED: AtomicBool = AtomicBool::new(false);
+
+pub fn is_paused() -> bool {
+    PAUSED.load(Ordering::Relaxed)
+}
+
+pub fn set_paused(paused: bool) {
+    PAUSED.store(paused, Ordering::Relaxed);
+}
 
 pub fn spawn(app: AppHandle, store: Arc<Store>) {
     std::thread::spawn(move || {
@@ -21,6 +32,10 @@ struct Handler {
 
 impl ClipboardHandler for Handler {
     fn on_clipboard_change(&mut self) -> CallbackResult {
+        if is_paused() {
+            return CallbackResult::Next;
+        }
+
         // small delay to let owner finish writing
         std::thread::sleep(std::time::Duration::from_millis(30));
 

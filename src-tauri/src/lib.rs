@@ -144,6 +144,10 @@ pub fn run() {
             commands::get_data_dir,
             commands::open_data_dir,
             commands::change_data_dir,
+            commands::is_listener_paused,
+            commands::set_listener_paused,
+            commands::paste_clean_text,
+            commands::open_browser_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

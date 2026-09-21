@@ -5,21 +5,25 @@ import { SearchIcon } from "./Icons";
 interface Props {
   items: Item[];
   hasQuery: boolean;
+  focusedIndex: number;
   onPaste: (id: number) => void;
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
   onCopy: (id: number) => void;
   onPreview: (src: string) => void;
+  onPasteClean?: (text: string) => void;
 }
 
 export function ClipList({
   items,
   hasQuery,
+  focusedIndex,
   onPaste,
   onDelete,
   onTogglePin,
   onCopy,
   onPreview,
+  onPasteClean,
 }: Props) {
   if (items.length === 0) {
     return (
@@ -68,15 +72,18 @@ export function ClipList({
 
   return (
     <div className="flex-1 space-y-2.5 overflow-y-auto px-3.5 py-3">
-      {items.map((item) => (
+      {items.map((item, index) => (
         <ClipItem
           key={item.id}
           item={item}
+          index={index}
+          isFocused={index === focusedIndex}
           onPaste={onPaste}
           onDelete={onDelete}
           onTogglePin={onTogglePin}
           onCopy={onCopy}
           onPreview={onPreview}
+          onPasteClean={onPasteClean}
         />
       ))}
     </div>
