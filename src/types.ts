@@ -14,6 +14,20 @@ export interface Settings {
   hotkey: string;
   autostartEnabled: boolean;
   replaceSystemClipboard: boolean;
+  captureText: boolean;
+  captureImages: boolean;
+  maxTextSizeMb: number;
+  maxImageSizeMb: number;
+  pastePlainText: boolean;
+  retentionDays: number;
+  positionMode: "caret" | "cursor" | "center" | string;
+}
+
+export interface StorageStats {
+  dbSizeBytes: number;
+  imagesSizeBytes: number;
+  totalSizeBytes: number;
+  itemCount: number;
 }
 
 export interface RunningAppInfo {
@@ -21,4 +35,5 @@ export interface RunningAppInfo {
   title: string;
   process_name: string;
 }
+
 

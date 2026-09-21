@@ -473,4 +473,69 @@ pub fn finish_onboarding(app: AppHandle, state: State<'_, AppState>) -> Result<(
     Ok(())
 }
 
+#[tauri::command]
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<(), String> {
+    let current = state.store.get_settings().map_err(|e| e.to_string())?;
+
+    // 1. Hotkey update
+    if !settings.hotkey.eq_ignore_ascii_case(&current.hotkey) {
+        let _ = apply_hotkey(&app, &state, &settings.hotkey);
+    }
+
+    // 2. Autostart update
+    if settings.autostart_enabled != current.autostart_enabled {
+        let mgr = app.autolaunch();
+        if settings.autostart_enabled {
+            let _ = mgr.enable();
+        } else {
+            let _ = mgr.disable();
+        }
+    }
+
+    // 3. Replace system clipboard update
+    if settings.replace_system_clipboard != current.replace_system_clipboard {
+        let _ = set_windows_clipboard_history(!settings.replace_system_clipboard);
+        crate::replacement_hotkey::set_enabled(settings.replace_system_clipboard);
+        if settings.replace_system_clipboard {
+            let _ = apply_hotkey(&app, &state, REPLACEMENT_HOTKEY);
+        } else if settings.hotkey.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
+            let _ = apply_hotkey(&app, &state, DEFAULT_HOTKEY);
+        }
+    }
+
+    // 4. Save to store
+    state.store.save_settings(&settings).map_err(|e| e.to_string())?;
+
+    // 5. Trim to max_count
+    let _ = state.store.trim(settings.max_count);
+
+    // 6. Retention clean if days > 0
+    let _ = state.store.clean_expired_history(settings.retention_days);
+
+    let _ = app.emit("clipboard://updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_storage_stats(
+    state: State<'_, AppState>,
+) -> Result<crate::storage::StorageStats, String> {
+    state.store.get_storage_stats().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn clean_expired_history(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    days: u32,
+) -> Result<usize, String> {
+    let count = state.store.clean_expired_history(days).map_err(|e| e.to_string())?;
+    let _ = app.emit("clipboard://updated", ());
+    Ok(count)
+}
+
 

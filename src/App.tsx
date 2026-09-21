@@ -12,6 +12,13 @@ const DEFAULT_SETTINGS: Settings = {
   hotkey: "Alt+V",
   autostartEnabled: false,
   replaceSystemClipboard: false,
+  captureText: true,
+  captureImages: true,
+  maxTextSizeMb: 4,
+  maxImageSizeMb: 50,
+  pastePlainText: false,
+  retentionDays: 0,
+  positionMode: "caret",
 };
 const REPLACEMENT_HOTKEY = "Win+V";
 
@@ -129,7 +136,12 @@ export default function App() {
   }, [filteredItems.length, focusedIndex]);
 
   const handlePaste = async (id: number) => {
-    await api.pasteItem(id);
+    const item = items.find((i) => i.id === id);
+    if (settings.pastePlainText && item && item.kind === "text" && item.text) {
+      await api.pasteCleanText(item.text);
+    } else {
+      await api.pasteItem(id);
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -271,41 +283,19 @@ export default function App() {
   const handleSaveSettings = async () => {
     const normalizedHotkey = normalizeHotkeyInput(draftSettings.hotkey);
     const next: Settings = {
+      ...draftSettings,
       maxCount: Math.min(500, Math.max(1, Number(draftSettings.maxCount) || 50)),
       hotkey: draftSettings.replaceSystemClipboard
         ? REPLACEMENT_HOTKEY
         : normalizedHotkey === REPLACEMENT_HOTKEY
           ? DEFAULT_SETTINGS.hotkey
           : normalizedHotkey,
-      autostartEnabled: draftSettings.autostartEnabled,
-      replaceSystemClipboard: draftSettings.replaceSystemClipboard,
     };
 
     setSettingsBusy(true);
     setSettingsError(null);
     try {
-      if (next.maxCount !== settings.maxCount) {
-        await api.setMaxCount(next.maxCount);
-      }
-      if (next.hotkey !== settings.hotkey) {
-        let hotkeyAfterReplacement = settings.hotkey;
-        if (next.replaceSystemClipboard !== settings.replaceSystemClipboard) {
-          await api.setReplaceSystemClipboard(next.replaceSystemClipboard);
-          hotkeyAfterReplacement = next.replaceSystemClipboard
-            ? REPLACEMENT_HOTKEY
-            : settings.hotkey === REPLACEMENT_HOTKEY
-              ? DEFAULT_SETTINGS.hotkey
-              : settings.hotkey;
-        }
-        if (next.hotkey !== hotkeyAfterReplacement) {
-          await api.setHotkey(next.hotkey);
-        }
-      } else if (next.replaceSystemClipboard !== settings.replaceSystemClipboard) {
-        await api.setReplaceSystemClipboard(next.replaceSystemClipboard);
-      }
-      if (next.autostartEnabled !== settings.autostartEnabled) {
-        await api.setAutostart(next.autostartEnabled);
-      }
+      await api.saveSettings(next);
       setSettings(next);
       setDraftSettings(next);
       setSettingsOpen(false);
@@ -317,6 +307,7 @@ export default function App() {
       setSettingsBusy(false);
     }
   };
+
 
   const handleToggleAutostart = async () => {
     if (autostartBusy || settingsBusy) {
@@ -421,6 +412,7 @@ export default function App() {
         onChange={setDraftSettings}
         onToggleAutostart={handleToggleAutostart}
         onToggleReplaceSystemClipboard={handleToggleReplaceSystemClipboard}
+        onHistoryCleaned={refresh}
       />
 
       {/* Emil-style Floating Micro-Toast Feedback */}

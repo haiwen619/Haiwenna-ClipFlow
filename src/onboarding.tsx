@@ -81,6 +81,13 @@ function OnboardingApp() {
     hotkey: "Alt+V",
     autostartEnabled: false,
     replaceSystemClipboard: false,
+    captureText: true,
+    captureImages: true,
+    maxTextSizeMb: 4,
+    maxImageSizeMb: 50,
+    pastePlainText: false,
+    retentionDays: 0,
+    positionMode: "caret",
   });
   const [dataDir, setDataDir] = useState<string>("");
   const [ignoredApps, setIgnoredApps] = useState<string[]>([]);

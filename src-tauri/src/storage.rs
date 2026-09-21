@@ -15,6 +15,11 @@ pub struct ClipItem {
     pub pinned: bool,
 }
 
+fn default_true() -> bool { true }
+fn default_max_text() -> u32 { 4 }
+fn default_max_image() -> u32 { 50 }
+fn default_position_mode() -> String { "caret".to_string() }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(rename = "maxCount")]
@@ -24,6 +29,32 @@ pub struct Settings {
     pub autostart_enabled: bool,
     #[serde(rename = "replaceSystemClipboard")]
     pub replace_system_clipboard: bool,
+    #[serde(rename = "captureText", default = "default_true")]
+    pub capture_text: bool,
+    #[serde(rename = "captureImages", default = "default_true")]
+    pub capture_images: bool,
+    #[serde(rename = "maxTextSizeMb", default = "default_max_text")]
+    pub max_text_size_mb: u32,
+    #[serde(rename = "maxImageSizeMb", default = "default_max_image")]
+    pub max_image_size_mb: u32,
+    #[serde(rename = "pastePlainText", default)]
+    pub paste_plain_text: bool,
+    #[serde(rename = "retentionDays", default)]
+    pub retention_days: u32,
+    #[serde(rename = "positionMode", default = "default_position_mode")]
+    pub position_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStats {
+    #[serde(rename = "dbSizeBytes")]
+    pub db_size_bytes: u64,
+    #[serde(rename = "imagesSizeBytes")]
+    pub images_size_bytes: u64,
+    #[serde(rename = "totalSizeBytes")]
+    pub total_size_bytes: u64,
+    #[serde(rename = "itemCount")]
+    pub item_count: u64,
 }
 
 pub struct Store {
@@ -54,6 +85,13 @@ impl Store {
             INSERT OR IGNORE INTO settings (key, value) VALUES ('replace_system_clipboard', '0');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('ignored_apps', '[]');
             INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_completed', '0');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('capture_text', '1');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('capture_images', '1');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('max_text_size_mb', '4');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('max_image_size_mb', '50');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('paste_plain_text', '0');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('retention_days', '0');
+            INSERT OR IGNORE INTO settings (key, value) VALUES ('position_mode', 'caret');
             "#,
         )?;
         conn.execute(
@@ -237,16 +275,111 @@ impl Store {
 
     pub fn get_settings(&self) -> rusqlite::Result<Settings> {
         let conn = self.conn.lock().unwrap();
-        let get = |k: &str| -> rusqlite::Result<String> {
+        let get = |k: &str, def: &str| -> String {
             conn.query_row("SELECT value FROM settings WHERE key=?1", [k], |r| r.get(0))
+                .unwrap_or_else(|_| def.to_string())
         };
         Ok(Settings {
-            max_count: get("max_count")?.parse().unwrap_or(50),
-            hotkey: get("hotkey")?,
-            autostart_enabled: get("autostart_enabled")? == "1",
-            replace_system_clipboard: get("replace_system_clipboard")? == "1",
+            max_count: get("max_count", "50").parse().unwrap_or(50),
+            hotkey: get("hotkey", "Alt+V"),
+            autostart_enabled: get("autostart_enabled", "0") == "1",
+            replace_system_clipboard: get("replace_system_clipboard", "0") == "1",
+            capture_text: get("capture_text", "1") == "1",
+            capture_images: get("capture_images", "1") == "1",
+            max_text_size_mb: get("max_text_size_mb", "4").parse().unwrap_or(4),
+            max_image_size_mb: get("max_image_size_mb", "50").parse().unwrap_or(50),
+            paste_plain_text: get("paste_plain_text", "0") == "1",
+            retention_days: get("retention_days", "0").parse().unwrap_or(0),
+            position_mode: get("position_mode", "caret"),
         })
     }
+
+    pub fn save_settings(&self, s: &Settings) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let pairs = [
+            ("max_count", s.max_count.to_string()),
+            ("hotkey", s.hotkey.clone()),
+            ("autostart_enabled", if s.autostart_enabled { "1" } else { "0" }.to_string()),
+            ("replace_system_clipboard", if s.replace_system_clipboard { "1" } else { "0" }.to_string()),
+            ("capture_text", if s.capture_text { "1" } else { "0" }.to_string()),
+            ("capture_images", if s.capture_images { "1" } else { "0" }.to_string()),
+            ("max_text_size_mb", s.max_text_size_mb.to_string()),
+            ("max_image_size_mb", s.max_image_size_mb.to_string()),
+            ("paste_plain_text", if s.paste_plain_text { "1" } else { "0" }.to_string()),
+            ("retention_days", s.retention_days.to_string()),
+            ("position_mode", s.position_mode.clone()),
+        ];
+        for (k, v) in pairs {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value=?2",
+                params![k, v],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn get_storage_stats(&self) -> rusqlite::Result<StorageStats> {
+        let db_path = self.data_dir.join("clipx.db");
+        let mut db_size_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+        if let Ok(m) = std::fs::metadata(self.data_dir.join("clipx.db-wal")) {
+            db_size_bytes += m.len();
+        }
+        if let Ok(m) = std::fs::metadata(self.data_dir.join("clipx.db-shm")) {
+            db_size_bytes += m.len();
+        }
+
+        let mut images_size_bytes = 0u64;
+        let img_dir = self.image_dir();
+        if let Ok(entries) = std::fs::read_dir(&img_dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_file() {
+                        images_size_bytes += meta.len();
+                    }
+                }
+            }
+        }
+
+        let item_count: u64 = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM clips", [], |r| r.get(0))
+                .unwrap_or(0)
+        };
+
+        Ok(StorageStats {
+            db_size_bytes,
+            images_size_bytes,
+            total_size_bytes: db_size_bytes + images_size_bytes,
+            item_count,
+        })
+    }
+
+    pub fn clean_expired_history(&self, retention_days: u32) -> rusqlite::Result<usize> {
+        if retention_days == 0 {
+            return Ok(0);
+        }
+        let cutoff = now_ms() - (retention_days as i64 * 86_400_000);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, image_path FROM clips WHERE pinned=0 AND created_at < ?1",
+        )?;
+        let rows: Vec<(i64, Option<String>)> = stmt
+            .query_map([cutoff], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(|x| x.ok())
+            .collect();
+        drop(stmt);
+
+        let count = rows.len();
+        for (id, path) in &rows {
+            conn.execute("DELETE FROM clips WHERE id=?1", [id])?;
+            if let Some(p) = path {
+                std::fs::remove_file(p).ok();
+            }
+        }
+        Ok(count)
+    }
+
 
     pub fn set_max_count(&self, n: u32) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();

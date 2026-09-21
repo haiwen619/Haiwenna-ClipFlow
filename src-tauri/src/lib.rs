@@ -160,6 +160,9 @@ pub fn run() {
             commands::set_onboarding_completed,
             commands::open_onboarding_window,
             commands::finish_onboarding,
+            commands::save_settings,
+            commands::get_storage_stats,
+            commands::clean_expired_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -174,6 +177,30 @@ pub(crate) fn toggle_main_window(app: &AppHandle, open_settings: bool) {
     }
 
     show_main_window(app, open_settings);
+}
+
+#[cfg(target_os = "windows")]
+fn get_mouse_point(window: &tauri::WebviewWindow) -> (i32, i32) {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    unsafe {
+        let mut pt = POINT::default();
+        if GetCursorPos(&mut pt).is_ok() {
+            return (pt.x, pt.y);
+        }
+    }
+    window
+        .cursor_position()
+        .map(|p| (p.x as i32, p.y as i32))
+        .unwrap_or((0, 0))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_mouse_point(window: &tauri::WebviewWindow) -> (i32, i32) {
+    window
+        .cursor_position()
+        .map(|p| (p.x as i32, p.y as i32))
+        .unwrap_or((0, 0))
 }
 
 #[cfg(target_os = "windows")]
@@ -238,7 +265,11 @@ pub(crate) fn show_main_window(app: &AppHandle, open_settings: bool) {
     focus::remember_foreground_window();
 
     if let Some(window) = app.get_webview_window("main") {
-        let (anchor_x, anchor_y) = get_anchor_point(&window);
+        let position_mode = app
+            .try_state::<AppState>()
+            .and_then(|s| s.store.get_settings().ok())
+            .map(|s| s.position_mode)
+            .unwrap_or_else(|| "caret".to_string());
 
         let size = window.outer_size().ok();
         let width = size
@@ -250,7 +281,9 @@ pub(crate) fn show_main_window(app: &AppHandle, open_settings: bool) {
             .map(|s| s.height as i32)
             .unwrap_or(MAIN_WINDOW_HEIGHT);
 
-        // Find the monitor containing the anchor point
+        let mouse_pt = get_mouse_point(&window);
+
+        // Find the monitor containing the mouse/anchor point
         let (mon_x, mon_y, mon_w, mon_h) = window
             .available_monitors()
             .ok()
@@ -258,38 +291,51 @@ pub(crate) fn show_main_window(app: &AppHandle, open_settings: bool) {
                 monitors.into_iter().find(|m| {
                     let pos = m.position();
                     let size = m.size();
-                    anchor_x >= pos.x
-                        && anchor_x < pos.x + size.width as i32
-                        && anchor_y >= pos.y
-                        && anchor_y < pos.y + size.height as i32
+                    mouse_pt.0 >= pos.x
+                        && mouse_pt.0 < pos.x + size.width as i32
+                        && mouse_pt.1 >= pos.y
+                        && mouse_pt.1 < pos.y + size.height as i32
                 })
             })
             .map(|m| (m.position().x, m.position().y, m.size().width as i32, m.size().height as i32))
             .unwrap_or((0, 0, 1920, 1080));
 
-        let margin = 12;
-        let bottom_margin = 64; // Reserved space for Windows Taskbar
-        let offset = 8; // Gap from anchor
-
-        // Calculate horizontal position (align left edge with anchor, constrained to screen)
-        let mut x = anchor_x;
-        let max_x = mon_x + mon_w - width - margin;
-        let min_x = mon_x + margin;
-        if x > max_x {
-            x = max_x;
-        }
-        if x < min_x {
-            x = min_x;
-        }
-
-        // Calculate vertical position:
-        // Like Windows 11 Win+V: pop downward below anchor if space permits; otherwise flip upward.
-        let space_below = (mon_y + mon_h - bottom_margin) - (anchor_y + offset);
-        let y = if space_below >= height {
-            anchor_y + offset
+        let (x, y) = if position_mode == "center" {
+            (
+                mon_x + (mon_w - width) / 2,
+                mon_y + (mon_h - height) / 2,
+            )
         } else {
-            let y_above = anchor_y - height - offset;
-            y_above.max(mon_y + margin)
+            let (anchor_x, anchor_y) = if position_mode == "cursor" {
+                mouse_pt
+            } else {
+                get_anchor_point(&window)
+            };
+
+            let margin = 12;
+            let bottom_margin = 64; // Reserved space for Windows Taskbar
+            let offset = 8; // Gap from anchor
+
+            // Calculate horizontal position (align left edge with anchor, constrained to screen)
+            let mut px = anchor_x;
+            let max_x = mon_x + mon_w - width - margin;
+            let min_x = mon_x + margin;
+            if px > max_x {
+                px = max_x;
+            }
+            if px < min_x {
+                px = min_x;
+            }
+
+            // Calculate vertical position:
+            let space_below = (mon_y + mon_h - bottom_margin) - (anchor_y + offset);
+            let py = if space_below >= height {
+                anchor_y + offset
+            } else {
+                let y_above = anchor_y - height - offset;
+                y_above.max(mon_y + margin)
+            };
+            (px, py)
         };
 
         let _ = window.set_position(PhysicalPosition::new(x, y));

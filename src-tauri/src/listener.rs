@@ -50,32 +50,50 @@ impl ClipboardHandler for Handler {
             Err(_) => return CallbackResult::Next,
         };
 
-        if let Ok(text) = cb.get_text() {
-            if !text.is_empty() {
-                let hash = sha256_hex(text.as_bytes());
-                if let Ok(true) = self.store.insert_text(&text, &hash) {
-                    self.trim_and_emit();
+        let settings = self.store.get_settings().ok();
+        let capture_text = settings.as_ref().map(|s| s.capture_text).unwrap_or(true);
+        let capture_images = settings.as_ref().map(|s| s.capture_images).unwrap_or(true);
+        let max_text_bytes = settings
+            .as_ref()
+            .map(|s| (s.max_text_size_mb as usize) * 1024 * 1024)
+            .unwrap_or(4 * 1024 * 1024);
+        let max_image_bytes = settings
+            .as_ref()
+            .map(|s| (s.max_image_size_mb as usize) * 1024 * 1024)
+            .unwrap_or(50 * 1024 * 1024);
+
+        if capture_text {
+            if let Ok(text) = cb.get_text() {
+                if !text.is_empty() && text.len() <= max_text_bytes {
+                    let hash = sha256_hex(text.as_bytes());
+                    if let Ok(true) = self.store.insert_text(&text, &hash) {
+                        self.trim_and_emit();
+                    }
+                    return CallbackResult::Next;
                 }
-                return CallbackResult::Next;
             }
         }
 
-        if let Ok(img) = cb.get_image() {
-            let hash = sha256_hex(&img.bytes);
-            let filename = format!("{}.png", &hash[..16]);
-            let path = self.store.image_dir().join(&filename);
-            if !path.exists() {
-                if let Some(rgba) = image::RgbaImage::from_raw(
-                    img.width as u32,
-                    img.height as u32,
-                    img.bytes.into_owned(),
-                ) {
-                    let _ = rgba.save(&path);
-                }
-            }
-            if let Some(p) = path.to_str() {
-                if let Ok(true) = self.store.insert_image(p, &hash) {
-                    self.trim_and_emit();
+        if capture_images {
+            if let Ok(img) = cb.get_image() {
+                if img.bytes.len() <= max_image_bytes {
+                    let hash = sha256_hex(&img.bytes);
+                    let filename = format!("{}.png", &hash[..16]);
+                    let path = self.store.image_dir().join(&filename);
+                    if !path.exists() {
+                        if let Some(rgba) = image::RgbaImage::from_raw(
+                            img.width as u32,
+                            img.height as u32,
+                            img.bytes.into_owned(),
+                        ) {
+                            let _ = rgba.save(&path);
+                        }
+                    }
+                    if let Some(p) = path.to_str() {
+                        if let Ok(true) = self.store.insert_image(p, &hash) {
+                            self.trim_and_emit();
+                        }
+                    }
                 }
             }
         }
@@ -92,6 +110,7 @@ impl Handler {
     fn trim_and_emit(&self) {
         if let Ok(s) = self.store.get_settings() {
             let _ = self.store.trim(s.max_count);
+            let _ = self.store.clean_expired_history(s.retention_days);
         }
         let _ = self.app.emit("clipboard://updated", ());
     }

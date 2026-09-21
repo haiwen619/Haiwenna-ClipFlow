@@ -31,6 +31,9 @@ export const api = {
     invoke<void>("set_onboarding_completed", { completed }),
   openOnboardingWindow: () => invoke<void>("open_onboarding_window"),
   finishOnboarding: () => invoke<void>("finish_onboarding"),
+  saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
+  getStorageStats: () => invoke<import("./types").StorageStats>("get_storage_stats"),
+  cleanExpiredHistory: (days: number) => invoke<number>("clean_expired_history", { days }),
 };
 
 export async function onClipboardUpdated(cb: () => void): Promise<UnlistenFn> {
