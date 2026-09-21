@@ -1,0 +1,256 @@
+use crate::storage::{ClipItem, Settings, Store};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+const DEFAULT_HOTKEY: &str = "Alt+V";
+const REPLACEMENT_HOTKEY: &str = "Win+V";
+
+pub struct AppState {
+    pub store: Arc<Store>,
+    pub tray_icon_hidden: std::sync::Mutex<bool>,
+}
+
+#[tauri::command]
+pub fn get_history(state: State<'_, AppState>, limit: u32) -> Result<Vec<ClipItem>, String> {
+    state.store.get_history(limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn paste_item(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    crate::paste::paste(&state.store, id).map_err(|e| e.to_string())?;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    std::thread::spawn(|| {
+        crate::replacement_hotkey::reset_state();
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        crate::focus::restore_foreground_window();
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let _ = crate::paste::send_ctrl_v();
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_item(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state.store.delete_item(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn clear_all(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.store.clear_all().map_err(|e| e.to_string())?;
+    let _ = app.emit("clipboard://updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_pin(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<bool, String> {
+    let pinned = state.store.toggle_pin(id).map_err(|e| e.to_string())?;
+    let _ = app.emit("clipboard://updated", ());
+    Ok(pinned)
+}
+
+#[tauri::command]
+pub fn copy_item(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    // copy back to system clipboard without triggering paste
+    crate::paste::paste(&state.store, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Result<Settings, String> {
+    let mut settings = state.store.get_settings().map_err(|e| e.to_string())?;
+    if let Ok(enabled) = app.autolaunch().is_enabled().map_err(|e| e.to_string()) {
+        settings.autostart_enabled = enabled;
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn set_max_count(state: State<'_, AppState>, n: u32) -> Result<(), String> {
+    state.store.set_max_count(n).map_err(|e| e.to_string())?;
+    state.store.trim(n).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_hotkey(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    hotkey: String,
+) -> Result<(), String> {
+    apply_hotkey(&app, &state, &hotkey)
+}
+
+#[tauri::command]
+pub fn set_autostart(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mgr = app.autolaunch();
+    if enabled {
+        mgr.enable().map_err(|e| e.to_string())?;
+    } else {
+        mgr.disable().map_err(|e| e.to_string())?;
+    }
+    state
+        .store
+        .set_autostart_enabled(enabled)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_replace_system_clipboard(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    set_windows_clipboard_history(!enabled)?;
+
+    let result = if enabled {
+        apply_hotkey(&app, &state, REPLACEMENT_HOTKEY)
+    } else {
+        let current_hotkey = state
+            .store
+            .get_settings()
+            .map(|s| s.hotkey)
+            .unwrap_or_else(|_| DEFAULT_HOTKEY.into());
+
+        if current_hotkey.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
+            apply_hotkey(&app, &state, DEFAULT_HOTKEY)
+        } else {
+            Ok(())
+        }
+    };
+
+    if let Err(err) = result {
+        let _ = set_windows_clipboard_history(enabled);
+        return Err(err);
+    }
+
+    crate::replacement_hotkey::set_enabled(enabled);
+
+    state
+        .store
+        .set_replace_system_clipboard(enabled)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn hide_window(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_data_dir(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.store.data_dir().to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn open_data_dir(state: State<'_, AppState>) -> Result<(), String> {
+    let dir = state.store.data_dir();
+    std::process::Command::new("explorer")
+        .arg(dir.as_os_str())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn change_data_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    default_dir: State<'_, PathBuf>,
+    new_dir: String,
+) -> Result<(), String> {
+    let new_path = PathBuf::from(&new_dir);
+    let current = state.store.data_dir();
+
+    if new_path == *current {
+        return Ok(());
+    }
+
+    // Create target directory
+    std::fs::create_dir_all(&new_path).map_err(|e| format!("创建目录失败: {e}"))?;
+    std::fs::create_dir_all(new_path.join("images"))
+        .map_err(|e| format!("创建图片目录失败: {e}"))?;
+
+    // Copy database
+    let src_db = current.join("clipx.db");
+    if src_db.exists() {
+        std::fs::copy(&src_db, new_path.join("clipx.db"))
+            .map_err(|e| format!("复制数据库失败: {e}"))?;
+    }
+
+    // Copy images
+    let src_images = current.join("images");
+    if src_images.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&src_images) {
+            for entry in entries.flatten() {
+                let dest = new_path.join("images").join(entry.file_name());
+                std::fs::copy(entry.path(), dest).ok();
+            }
+        }
+    }
+
+    // Write override config
+    let override_file = default_dir.join("data_dir.conf");
+    std::fs::create_dir_all(default_dir.as_path()).ok();
+    std::fs::write(&override_file, &new_dir).map_err(|e| format!("保存配置失败: {e}"))?;
+
+    // Restart app
+    app.restart();
+}
+
+fn apply_hotkey(app: &AppHandle, state: &AppState, hotkey: &str) -> Result<(), String> {
+    let current = state
+        .store
+        .get_settings()
+        .map(|s| s.hotkey)
+        .unwrap_or_else(|_| DEFAULT_HOTKEY.into());
+
+    if !current.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
+        if let Ok(old_sc) = crate::hotkey::parse(&current) {
+            let _ = app.global_shortcut().unregister(old_sc);
+        }
+    }
+
+    if !hotkey.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
+        let new_sc = crate::hotkey::parse(hotkey).map_err(|e| e.to_string())?;
+        app.global_shortcut()
+            .register(new_sc)
+            .map_err(|e| e.to_string())?;
+    }
+
+    state.store.set_hotkey(hotkey).map_err(|e| e.to_string())
+}
+
+pub(crate) fn set_windows_clipboard_history(enabled: bool) -> Result<(), String> {
+    let value = if enabled { "1" } else { "0" };
+    let status = std::process::Command::new("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Microsoft\Clipboard",
+            "/v",
+            "EnableClipboardHistory",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            value,
+            "/f",
+        ])
+        .status()
+        .map_err(|e| format!("修改 Windows 剪贴板历史失败: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("修改 Windows 剪贴板历史失败".into())
+    }
+}
