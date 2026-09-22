@@ -2,7 +2,7 @@ use crate::crypto::{self, EncryptedEnvelope, PairingQrPayload};
 use crate::storage::{ClipItem, PairedDevice, Store};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
-use std::net::{IpAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -36,24 +36,92 @@ pub struct SyncStatusInfo {
     pub port: u16,
 }
 
-pub fn get_local_lan_ip() -> Option<String> {
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("8.8.8.8:80").ok()?;
-    let local_addr = socket.local_addr().ok()?;
-    match local_addr.ip() {
-        IpAddr::V4(ipv4) => Some(ipv4.to_string()),
-        _ => None,
+fn is_valid_physical_ip(ip: &str) -> bool {
+    if ip.starts_with("127.")
+        || ip.starts_with("169.254.")
+        || ip.starts_with("172.17.")
+        || ip.starts_with("172.18.")
+        || ip.starts_with("172.19.")
+    {
+        return false;
     }
+    ip.starts_with("192.168.") || ip.starts_with("10.")
+}
+
+pub fn get_local_lan_ips() -> Vec<String> {
+    let mut ips = Vec::new();
+
+    // 1. 优先探测常见家庭/办公网关 (192.168.x.x, 10.x.x.x)
+    for gateway in &[
+        "192.168.2.1:80",
+        "192.168.1.1:80",
+        "192.168.0.1:80",
+        "192.168.31.1:80",
+        "192.168.50.1:80",
+        "10.0.0.1:80",
+    ] {
+        if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+            if socket.connect(gateway).is_ok() {
+                if let Ok(local_addr) = socket.local_addr() {
+                    let ip = local_addr.ip().to_string();
+                    if is_valid_physical_ip(&ip) && !ips.contains(&ip) {
+                        ips.push(ip);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Windows 下使用 PowerShell 准确定位物理局域网 IPv4
+    #[cfg(target_os = "windows")]
+    if ips.is_empty() {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        if let Ok(out) = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like '192.168.*' -or $_.IPAddress -like '10.*' }).IPAddress",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let ip = line.trim().to_string();
+                if is_valid_physical_ip(&ip) && !ips.contains(&ip) {
+                    ips.push(ip);
+                }
+            }
+        }
+    }
+
+    // 3. 兜底探测
+    if ips.is_empty() {
+        if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+            if socket.connect("8.8.8.8:80").is_ok() {
+                if let Ok(local_addr) = socket.local_addr() {
+                    let ip = local_addr.ip().to_string();
+                    if !ip.starts_with("127.") {
+                        ips.push(ip);
+                    }
+                }
+            }
+        }
+    }
+
+    ips
+}
+
+pub fn get_local_lan_ip() -> Option<String> {
+    get_local_lan_ips().into_iter().next()
 }
 
 pub fn generate_pairing_payload(store: &Store) -> rusqlite::Result<PairingQrPayload> {
     let identity = store.get_device_identity()?;
-    let shared_key = crypto::generate_shared_key();
-    let local_ip = get_local_lan_ip();
-    let mut lan_addresses = vec![];
-    if let Some(ip) = local_ip {
-        lan_addresses.push(ip);
-    }
+    let shared_key = store.get_or_create_sync_key()?;
+    let lan_addresses = get_local_lan_ips();
 
     Ok(PairingQrPayload {
         protocol: "clipflow-e2ee-v1".to_string(),

@@ -14,6 +14,7 @@ export default defineConfig(async () => ({
         preview: resolve(__dirname, "preview.html"),
         onboarding: resolve(__dirname, "onboarding.html"),
         mobile: resolve(__dirname, "mobile.html"),
+        website: resolve(__dirname, "website.html"),
       },
     },
   },

@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, onClipboardUpdated, onOpenSettings } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, onClipboardUpdated, onOpenSettings, onDevicesUpdated } from "./api";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { ClipItem, Settings } from "./types";
 import { Header, type CategoryFilter } from "./components/Header";
 import { ClipList } from "./components/ClipList";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { CheckIcon } from "./components/Icons";
+import { RelaySyncClient } from "./syncRelay";
 
 const DEFAULT_SETTINGS: Settings = {
   maxCount: 50,
@@ -47,7 +48,7 @@ export default function App() {
 
   const showToast = useCallback((msg: string) => {
     setToastText(msg);
-    const t = setTimeout(() => setToastText(null), 1500);
+    const t = setTimeout(() => setToastText(null), 1800);
     return () => clearTimeout(t);
   }, []);
 
@@ -69,20 +70,182 @@ export default function App() {
     }
   }, []);
 
+  const masterRelayClientRef = useRef<RelaySyncClient | null>(null);
+  const syncClientsRef = useRef<Map<string, RelaySyncClient>>(new Map());
+  const lastSyncTextRef = useRef<string>("");
+  const lastSyncImagePathRef = useRef<string>("");
+  const lastSyncImageDataUrlRef = useRef<string>("");
+
+  // 维护与云端中继房间的常驻长连接（包含本机主同步密钥房间与所有已配对设备通道）
+  const syncRelayDevices = useCallback(async () => {
+    try {
+      const status = await api.getSyncStatus();
+      const masterKey = await api.getSyncKey();
+
+      // 1. 本机主同步房间长连接（与配对二维码 100% 对应，扫码即入同房）
+      if (masterKey) {
+        if (!masterRelayClientRef.current) {
+          const masterClient = new RelaySyncClient({
+            deviceId: status.deviceId,
+            platform: "windows",
+            onTextReceived: async (remoteText, senderId) => {
+              if (remoteText && remoteText !== lastSyncTextRef.current) {
+                lastSyncTextRef.current = remoteText;
+                try {
+                  await api.receiveRemoteText(remoteText, senderId);
+                  showToast("✓ 收到手机端同步剪贴板");
+                  refresh();
+                } catch (err) {
+                  console.error("receiveRemoteText failed:", err);
+                }
+              }
+            },
+            onImageReceived: async (remoteDataUrl, senderId) => {
+              if (remoteDataUrl && remoteDataUrl !== lastSyncImageDataUrlRef.current) {
+                lastSyncImageDataUrlRef.current = remoteDataUrl;
+                try {
+                  await api.receiveRemoteImage(remoteDataUrl, senderId);
+                  showToast("✓ 收到手机端同步图片");
+                  refresh();
+                } catch (err) {
+                  console.error("receiveRemoteImage failed:", err);
+                }
+              }
+            },
+            onDeviceAnnounce: async (devInfo) => {
+              try {
+                await api.addPairedDevice({
+                  id: devInfo.deviceId,
+                  name: devInfo.deviceName,
+                  platform: devInfo.platform,
+                  sharedKey: masterKey,
+                });
+                showToast(`✓ 已连接手机：${devInfo.deviceName}`);
+              } catch (e) {
+                console.warn("addPairedDevice failed:", e);
+              }
+            },
+          });
+          masterClient.connect(masterKey);
+          masterRelayClientRef.current = masterClient;
+        }
+      }
+
+      // 2. 其它已配对移动设备的辅助连接
+      const devices = await api.getPairedDevices();
+      const currentMap = syncClientsRef.current;
+      const deviceIds = new Set(devices.map((d) => d.id));
+
+      for (const [id, client] of currentMap.entries()) {
+        if (!deviceIds.has(id)) {
+          client.disconnect();
+          currentMap.delete(id);
+        }
+      }
+
+      for (const dev of devices) {
+        if (!currentMap.has(dev.id) && dev.sharedKey !== masterKey) {
+          const client = new RelaySyncClient({
+            deviceId: status.deviceId,
+            platform: "windows",
+            onTextReceived: async (remoteText, senderId) => {
+              if (remoteText && remoteText !== lastSyncTextRef.current) {
+                lastSyncTextRef.current = remoteText;
+                try {
+                  await api.receiveRemoteText(remoteText, senderId);
+                  showToast("✓ 收到手机端同步剪贴板");
+                  refresh();
+                } catch (err) {
+                  console.error("receiveRemoteText failed:", err);
+                }
+              }
+            },
+            onImageReceived: async (remoteDataUrl, senderId) => {
+              if (remoteDataUrl && remoteDataUrl !== lastSyncImageDataUrlRef.current) {
+                lastSyncImageDataUrlRef.current = remoteDataUrl;
+                try {
+                  await api.receiveRemoteImage(remoteDataUrl, senderId);
+                  showToast("✓ 收到手机端同步图片");
+                  refresh();
+                } catch (err) {
+                  console.error("receiveRemoteImage failed:", err);
+                }
+              }
+            },
+          });
+          client.connect(dev.sharedKey);
+          currentMap.set(dev.id, client);
+        }
+      }
+    } catch (e) {
+      console.warn("[App] syncRelayDevices failed:", e);
+    }
+  }, [refresh, showToast]);
+
   useEffect(() => {
     refresh();
     loadSettings();
+    syncRelayDevices();
     api.isListenerPaused().then(setIsPaused).catch(console.error);
 
     let unlistenClipboard: (() => void) | undefined;
     let unlistenSettings: (() => void) | undefined;
+    let unlistenDevices: (() => void) | undefined;
 
-    onClipboardUpdated(refresh).then((u) => (unlistenClipboard = u));
+    onClipboardUpdated(async () => {
+      refresh();
+      // 当剪贴板更新时，广播推送给已连接的移动端
+      try {
+        const history = await api.getHistory(1);
+        if (history.length > 0) {
+          const top = history[0];
+          if (top.kind === "text" && top.text && top.text !== lastSyncTextRef.current) {
+            lastSyncTextRef.current = top.text;
+            // 1. 推送到本机主同步房间（供扫码手机即时接收）
+            if (masterRelayClientRef.current) {
+              masterRelayClientRef.current.sendText(top.text);
+            }
+            // 2. 推送到其它设备连接
+            for (const client of syncClientsRef.current.values()) {
+              client.sendText(top.text);
+            }
+          } else if (top.kind === "image" && top.imagePath) {
+            if (top.imagePath !== lastSyncImagePathRef.current) {
+              lastSyncImagePathRef.current = top.imagePath;
+              try {
+                const dataUrl = await api.readImageBase64(top.imagePath);
+                if (dataUrl && dataUrl !== lastSyncImageDataUrlRef.current) {
+                  lastSyncImageDataUrlRef.current = dataUrl;
+                  // 1. 推送到本机主同步房间（供扫码手机即时接收）
+                  if (masterRelayClientRef.current) {
+                    masterRelayClientRef.current.sendImage(dataUrl);
+                  }
+                  // 2. 推送到其它设备连接
+                  for (const client of syncClientsRef.current.values()) {
+                    client.sendImage(dataUrl);
+                  }
+                }
+              } catch (err) {
+                console.warn("Read or broadcast image failed:", err);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Broadcast clip to relay failed:", e);
+      }
+    }).then((u) => (unlistenClipboard = u));
+
+    onDevicesUpdated(() => {
+      syncRelayDevices();
+    }).then((u) => (unlistenDevices = u));
+
     onOpenSettings(() => {
       setSettingsOpen(true);
       setSettingsError(null);
       refresh();
       loadSettings();
+      syncRelayDevices();
     }).then((u) => (unlistenSettings = u));
 
     const onFocus = () => {
@@ -101,10 +264,17 @@ export default function App() {
     return () => {
       unlistenClipboard?.();
       unlistenSettings?.();
+      unlistenDevices?.();
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      masterRelayClientRef.current?.disconnect();
+      masterRelayClientRef.current = null;
+      for (const client of syncClientsRef.current.values()) {
+        client.disconnect();
+      }
+      syncClientsRef.current.clear();
     };
-  }, [loadSettings, refresh]);
+  }, [loadSettings, refresh, syncRelayDevices]);
 
   // Combined Query + Category Filter
   const normalizedQuery = query.trim().toLowerCase();

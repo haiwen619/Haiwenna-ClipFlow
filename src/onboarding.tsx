@@ -295,7 +295,7 @@ function OnboardingApp() {
 
         <div className="flex items-center gap-2">
           <span className="rounded-full border border-slate-200/80 bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-500 shadow-subtle-sm">
-            简体中文 · v0.1.0
+            简体中文 · v0.1.1
           </span>
         </div>
       </header>

@@ -1,8 +1,11 @@
 use crate::storage::{ClipItem, Settings, Store};
+use sha2::Digest;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_autostart::ManagerExt;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 const DEFAULT_HOTKEY: &str = "Alt+V";
@@ -20,18 +23,26 @@ pub fn get_history(state: State<'_, AppState>, limit: u32) -> Result<Vec<ClipIte
 
 #[tauri::command]
 pub fn paste_item(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    crate::paste::paste(&state.store, id).map_err(|e| e.to_string())?;
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.hide();
+    #[cfg(target_os = "windows")]
+    {
+        crate::paste::paste(&state.store, id).map_err(|e| e.to_string())?;
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+        }
+        std::thread::spawn(|| {
+            crate::replacement_hotkey::reset_state();
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            crate::focus::restore_foreground_window();
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            let _ = crate::paste::send_ctrl_v();
+        });
+        Ok(())
     }
-    std::thread::spawn(|| {
-        crate::replacement_hotkey::reset_state();
-        std::thread::sleep(std::time::Duration::from_millis(120));
-        crate::focus::restore_foreground_window();
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        let _ = crate::paste::send_ctrl_v();
-    });
-    Ok(())
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, state, id);
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -55,15 +66,30 @@ pub fn toggle_pin(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result
 
 #[tauri::command]
 pub fn copy_item(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    // copy back to system clipboard without triggering paste
-    crate::paste::paste(&state.store, id).map_err(|e| e.to_string())
+    #[cfg(target_os = "windows")]
+    {
+        crate::paste::paste(&state.store, id).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (state, id);
+        Ok(())
+    }
 }
 
 #[tauri::command]
 pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Result<Settings, String> {
+    #[allow(unused_mut)]
     let mut settings = state.store.get_settings().map_err(|e| e.to_string())?;
-    if let Ok(enabled) = app.autolaunch().is_enabled().map_err(|e| e.to_string()) {
-        settings.autostart_enabled = enabled;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        if let Ok(enabled) = app.autolaunch().is_enabled().map_err(|e| e.to_string()) {
+            settings.autostart_enabled = enabled;
+        }
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = app;
     }
     Ok(settings)
 }
@@ -89,11 +115,18 @@ pub fn set_autostart(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), String> {
-    let mgr = app.autolaunch();
-    if enabled {
-        mgr.enable().map_err(|e| e.to_string())?;
-    } else {
-        mgr.disable().map_err(|e| e.to_string())?;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let mgr = app.autolaunch();
+        if enabled {
+            mgr.enable().map_err(|e| e.to_string())?;
+        } else {
+            mgr.disable().map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = app;
     }
     state
         .store
@@ -108,30 +141,37 @@ pub fn set_replace_system_clipboard(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), String> {
-    set_windows_clipboard_history(!enabled)?;
+    #[cfg(target_os = "windows")]
+    {
+        set_windows_clipboard_history(!enabled)?;
 
-    let result = if enabled {
-        apply_hotkey(&app, &state, REPLACEMENT_HOTKEY)
-    } else {
-        let current_hotkey = state
-            .store
-            .get_settings()
-            .map(|s| s.hotkey)
-            .unwrap_or_else(|_| DEFAULT_HOTKEY.into());
-
-        if current_hotkey.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
-            apply_hotkey(&app, &state, DEFAULT_HOTKEY)
+        let result = if enabled {
+            apply_hotkey(&app, &state, REPLACEMENT_HOTKEY)
         } else {
-            Ok(())
+            let current_hotkey = state
+                .store
+                .get_settings()
+                .map(|s| s.hotkey)
+                .unwrap_or_else(|_| DEFAULT_HOTKEY.into());
+
+            if current_hotkey.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
+                apply_hotkey(&app, &state, DEFAULT_HOTKEY)
+            } else {
+                Ok(())
+            }
+        };
+
+        if let Err(err) = result {
+            let _ = set_windows_clipboard_history(enabled);
+            return Err(err);
         }
-    };
 
-    if let Err(err) = result {
-        let _ = set_windows_clipboard_history(enabled);
-        return Err(err);
+        crate::replacement_hotkey::set_enabled(enabled);
     }
-
-    crate::replacement_hotkey::set_enabled(enabled);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+    }
 
     state
         .store
@@ -141,9 +181,12 @@ pub fn set_replace_system_clipboard(
 
 #[tauri::command]
 pub fn hide_window(app: AppHandle) -> Result<(), String> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let _ = app;
     Ok(())
 }
 
@@ -154,11 +197,18 @@ pub fn get_data_dir(state: State<'_, AppState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn open_data_dir(state: State<'_, AppState>) -> Result<(), String> {
-    let dir = state.store.data_dir();
-    std::process::Command::new("explorer")
-        .arg(dir.as_os_str())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        let dir = state.store.data_dir();
+        std::process::Command::new("explorer")
+            .arg(dir.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = state;
+    }
     Ok(())
 }
 
@@ -209,78 +259,122 @@ pub fn change_data_dir(
 }
 
 fn apply_hotkey(app: &AppHandle, state: &AppState, hotkey: &str) -> Result<(), String> {
-    let current = state
-        .store
-        .get_settings()
-        .map(|s| s.hotkey)
-        .unwrap_or_else(|_| DEFAULT_HOTKEY.into());
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let current = state
+            .store
+            .get_settings()
+            .map(|s| s.hotkey)
+            .unwrap_or_else(|_| DEFAULT_HOTKEY.into());
 
-    if !current.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
-        if let Ok(old_sc) = crate::hotkey::parse(&current) {
-            let _ = app.global_shortcut().unregister(old_sc);
+        if !current.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
+            if let Ok(old_sc) = crate::hotkey::parse(&current) {
+                let _ = app.global_shortcut().unregister(old_sc);
+            }
+        }
+
+        if !hotkey.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
+            let new_sc = crate::hotkey::parse(hotkey).map_err(|e| e.to_string())?;
+            if app.global_shortcut().is_registered(new_sc) {
+                let _ = app.global_shortcut().unregister(new_sc);
+            }
+            if let Err(_) = app.global_shortcut().register(new_sc) {
+                let _ = app.global_shortcut().unregister_all();
+                app.global_shortcut()
+                    .register(new_sc)
+                    .map_err(|e| format!("快捷键注册失败（已被系统其他应用占用）: {e}"))?;
+            }
         }
     }
-
-    if !hotkey.eq_ignore_ascii_case(REPLACEMENT_HOTKEY) {
-        let new_sc = crate::hotkey::parse(hotkey).map_err(|e| e.to_string())?;
-        app.global_shortcut()
-            .register(new_sc)
-            .map_err(|e| e.to_string())?;
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = (app, hotkey);
     }
 
     state.store.set_hotkey(hotkey).map_err(|e| e.to_string())
 }
 
 pub(crate) fn set_windows_clipboard_history(enabled: bool) -> Result<(), String> {
-    let value = if enabled { "1" } else { "0" };
-    let status = std::process::Command::new("reg")
-        .args([
-            "add",
-            r"HKCU\Software\Microsoft\Clipboard",
-            "/v",
-            "EnableClipboardHistory",
-            "/t",
-            "REG_DWORD",
-            "/d",
-            value,
-            "/f",
-        ])
-        .status()
-        .map_err(|e| format!("修改 Windows 剪贴板历史失败: {e}"))?;
+    #[cfg(target_os = "windows")]
+    {
+        let value = if enabled { "1" } else { "0" };
+        let status = std::process::Command::new("reg")
+            .args([
+                "add",
+                r"HKCU\Software\Microsoft\Clipboard",
+                "/v",
+                "EnableClipboardHistory",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                value,
+                "/f",
+            ])
+            .status()
+            .map_err(|e| format!("修改 Windows 剪贴板历史失败: {e}"))?;
 
-    if status.success() {
+        if status.success() {
+            Ok(())
+        } else {
+            Err("修改 Windows 剪贴板历史失败".into())
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
         Ok(())
-    } else {
-        Err("修改 Windows 剪贴板历史失败".into())
     }
 }
 
 #[tauri::command]
 pub fn is_listener_paused() -> Result<bool, String> {
-    Ok(crate::listener::is_paused())
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        Ok(crate::listener::is_paused())
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        Ok(false)
+    }
 }
 
 #[tauri::command]
 pub fn set_listener_paused(paused: bool) -> Result<bool, String> {
-    crate::listener::set_paused(paused);
-    Ok(crate::listener::is_paused())
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        crate::listener::set_paused(paused);
+        Ok(crate::listener::is_paused())
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = paused;
+        Ok(false)
+    }
 }
 
 #[tauri::command]
 pub fn paste_clean_text(app: AppHandle, text: String) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    cb.set_text(text).map_err(|e| e.to_string())?;
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.hide();
+    #[cfg(target_os = "windows")]
+    {
+        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        cb.set_text(text).map_err(|e| e.to_string())?;
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+        }
+        std::thread::spawn(|| {
+            crate::replacement_hotkey::reset_state();
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            crate::focus::restore_foreground_window();
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            let _ = crate::paste::send_ctrl_v();
+        });
+        Ok(())
     }
-    std::thread::spawn(|| {
-        crate::replacement_hotkey::reset_state();
-        std::thread::sleep(std::time::Duration::from_millis(120));
-        crate::focus::restore_foreground_window();
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        let _ = crate::paste::send_ctrl_v();
-    });
-    Ok(())
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, text);
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -288,10 +382,13 @@ pub fn open_browser_url(url: String) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("Invalid URL protocol".into());
     }
-    std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", &url])
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -437,24 +534,29 @@ pub fn set_onboarding_completed(state: State<'_, AppState>, completed: bool) -> 
 
 #[tauri::command]
 pub fn open_onboarding_window(app: AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("onboarding") {
-        let _ = w.show();
-        let _ = w.set_focus();
-        return Ok(());
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        if let Some(w) = app.get_webview_window("onboarding") {
+            let _ = w.show();
+            let _ = w.set_focus();
+            return Ok(());
+        }
+        let _ = tauri::WebviewWindowBuilder::new(
+            &app,
+            "onboarding",
+            tauri::WebviewUrl::App("onboarding.html".into()),
+        )
+        .title("Haiwenna ClipFlow - 欢迎设置向导")
+        .inner_size(760.0, 540.0)
+        .center()
+        .resizable(false)
+        .decorations(true)
+        .always_on_top(true)
+        .build()
+        .map_err(|e| e.to_string())?;
     }
-    let _ = tauri::WebviewWindowBuilder::new(
-        &app,
-        "onboarding",
-        tauri::WebviewUrl::App("onboarding.html".into()),
-    )
-    .title("Haiwenna ClipFlow - 欢迎设置向导")
-    .inner_size(760.0, 540.0)
-    .center()
-    .resizable(false)
-    .decorations(true)
-    .always_on_top(true)
-    .build()
-    .map_err(|e| e.to_string())?;
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let _ = app;
     Ok(())
 }
 
@@ -465,11 +567,16 @@ pub fn finish_onboarding(app: AppHandle, state: State<'_, AppState>) -> Result<(
         .set_onboarding_completed(true)
         .map_err(|e| e.to_string())?;
 
-    if let Some(w) = app.get_webview_window("onboarding") {
-        let _ = w.close();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        if let Some(w) = app.get_webview_window("onboarding") {
+            let _ = w.close();
+        }
+        crate::show_main_window(&app, false);
     }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let _ = app;
 
-    crate::show_main_window(&app, false);
     Ok(())
 }
 
@@ -487,6 +594,7 @@ pub fn save_settings(
     }
 
     // 2. Autostart update
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if settings.autostart_enabled != current.autostart_enabled {
         let mgr = app.autolaunch();
         if settings.autostart_enabled {
@@ -497,6 +605,7 @@ pub fn save_settings(
     }
 
     // 3. Replace system clipboard update
+    #[cfg(target_os = "windows")]
     if settings.replace_system_clipboard != current.replace_system_clipboard {
         let _ = set_windows_clipboard_history(!settings.replace_system_clipboard);
         crate::replacement_hotkey::set_enabled(settings.replace_system_clipboard);
@@ -593,6 +702,140 @@ pub fn set_device_name(
 ) -> Result<(), String> {
     state.store.set_device_name(&name).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn receive_remote_text(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    text: String,
+    device_id: String,
+) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    if let Ok(devices) = state.store.get_paired_devices() {
+        if let Some(dev) = devices.iter().find(|d| d.id == device_id) {
+            let _ = state.store.update_device_active(&dev.id);
+        }
+    }
+    let mut h = sha2::Sha256::new();
+    h.update(text.as_bytes());
+    let hash = hex::encode(h.finalize());
+    let _ = state.store.insert_text(&text, &hash);
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            let _ = cb.set_text(&text);
+        }
+    }
+
+    let _ = app.emit("clipboard://updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_sync_key(state: State<'_, AppState>) -> Result<String, String> {
+    state.store.get_or_create_sync_key().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_paired_device(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    platform: String,
+    shared_key: String,
+) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let dev = crate::storage::PairedDevice {
+        id,
+        name,
+        platform,
+        shared_key,
+        paired_at: now,
+        last_active_at: now,
+    };
+    state.store.add_paired_device(&dev).map_err(|e| e.to_string())?;
+    let _ = app.emit("sync://devices-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn read_image_base64(image_path: String) -> Result<String, String> {
+    let path = std::path::Path::new(&image_path);
+    if !path.exists() {
+        return Err("Image not found".into());
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:image/png;base64,{}", b64))
+}
+
+#[tauri::command]
+pub fn receive_remote_image(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    data_url: String,
+    device_id: String,
+) -> Result<(), String> {
+    if let Ok(devices) = state.store.get_paired_devices() {
+        if let Some(dev) = devices.iter().find(|d| d.id == device_id) {
+            let _ = state.store.update_device_active(&dev.id);
+        }
+    }
+
+    let b64_part = if let Some(pos) = data_url.find("base64,") {
+        &data_url[pos + 7..]
+    } else {
+        &data_url
+    };
+
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64_part)
+        .map_err(|e| e.to_string())?;
+
+    let mut h = sha2::Sha256::new();
+    h.update(&bytes);
+    let hash = hex::encode(h.finalize());
+
+    let filename = format!("{}.png", &hash[..16]);
+    let path = state.store.image_dir().join(&filename);
+    if !path.exists() {
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    }
+
+    if let Some(p) = path.to_str() {
+        let _ = state.store.insert_image(p, &hash);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(img) = image::load_from_memory(&bytes) {
+            let rgba = img.to_rgba8();
+            if let Ok(mut cb) = arboard::Clipboard::new() {
+                let img_data = arboard::ImageData {
+                    width: rgba.width() as usize,
+                    height: rgba.height() as usize,
+                    bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+                };
+                let _ = cb.set_image(img_data);
+            }
+        }
+    }
+
+    let _ = app.emit("clipboard://updated", ());
+    Ok(())
+}
+
+
+
 
 
 

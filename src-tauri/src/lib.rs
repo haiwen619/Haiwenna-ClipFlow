@@ -1,51 +1,100 @@
 use std::sync::Arc;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::{
     menu::ContextMenu,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition,
+    AppHandle, Emitter, PhysicalPosition,
 };
+use tauri::Manager;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 mod commands;
 pub mod crypto;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod focus;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod hotkey;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod listener;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod paste;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod replacement_hotkey;
 mod storage;
 pub mod sync;
 
 use commands::AppState;
 
-
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const OPEN_SETTINGS_EVENT: &str = "app://open-settings";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const TRAY_ID: &str = "clipx-tray";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const TRAY_SHOW_ID: &str = "tray_show";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const TRAY_SETTINGS_ID: &str = "tray_settings";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const TRAY_HIDE_ICON_ID: &str = "tray_hide_icon";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const TRAY_QUIT_ID: &str = "tray_quit";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const MAIN_WINDOW_WIDTH: i32 = 380;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const MAIN_WINDOW_HEIGHT: i32 = 540;
+
+#[cfg(target_os = "windows")]
+fn kill_other_instances() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let my_pid = std::process::id();
+
+    // 终止除了自身之外的其他 clipx.exe 进程，释放热键占用与网络端口
+    let _ = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!(
+                "Get-Process -Name clipx -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {} }} | Stop-Process -Force",
+                my_pid
+            ),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    std::thread::sleep(std::time::Duration::from_millis(150));
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
+    #[cfg(target_os = "windows")]
+    kill_other_instances();
+
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        builder = builder
+            .plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ))
+            .plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(|app, _shortcut, event| {
+                        if event.state() == ShortcutState::Pressed {
+                            toggle_main_window(app, false);
+                        }
+                    })
+                    .build(),
+            );
+    }
+
+    builder
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        toggle_main_window(app, false);
-                    }
-                })
-                .build(),
-        )
         .setup(|app| {
             let default_data_dir = app
                 .path()
@@ -67,73 +116,87 @@ pub fn run() {
             app.manage(default_data_dir);
             let store = Arc::new(storage::Store::new(data_dir).expect("init store"));
 
-            let settings = store.get_settings().expect("read settings");
-            replacement_hotkey::start(app.handle().clone(), settings.replace_system_clipboard);
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let settings = store.get_settings().expect("read settings");
+                replacement_hotkey::start(app.handle().clone(), settings.replace_system_clipboard);
 
-            if settings.replace_system_clipboard {
-                let _ = commands::set_windows_clipboard_history(false);
-            }
+                if settings.replace_system_clipboard {
+                    let _ = commands::set_windows_clipboard_history(false);
+                }
 
-            if !settings.hotkey.eq_ignore_ascii_case("Win+V") {
-                let shortcut = hotkey::parse(&settings.hotkey)
-                    .unwrap_or_else(|_| Shortcut::new(Some(Modifiers::ALT), Code::KeyV));
-                app.global_shortcut().register(shortcut)?;
-            }
+                if !settings.hotkey.eq_ignore_ascii_case("Win+V") {
+                    let shortcut = hotkey::parse(&settings.hotkey)
+                        .unwrap_or_else(|_| Shortcut::new(Some(Modifiers::ALT), Code::KeyV));
+                    
+                    // 如果已占用/已注册，先卸载后强行抢占注册
+                    if app.global_shortcut().is_registered(shortcut) {
+                        let _ = app.global_shortcut().unregister(shortcut);
+                    }
 
-            let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
-                .tooltip("ClipX")
-                .show_menu_on_left_click(false)
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button,
-                        button_state,
-                        ..
-                    } = event
-                    {
-                        if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                            toggle_main_window(tray.app_handle(), false);
-                        } else if button == MouseButton::Right
-                            && button_state == MouseButtonState::Up
-                        {
-                            show_tray_context_menu(tray.app_handle());
+                    if let Err(_) = app.global_shortcut().register(shortcut) {
+                        let _ = app.global_shortcut().unregister_all();
+                        if let Err(err) = app.global_shortcut().register(shortcut) {
+                            eprintln!("[WARN] 快捷键 {} 强制注册失败: {}", settings.hotkey, err);
                         }
                     }
+                }
+
+                let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
+                    .tooltip("ClipX")
+                    .show_menu_on_left_click(false)
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button,
+                            button_state,
+                            ..
+                        } = event
+                        {
+                            if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                                toggle_main_window(tray.app_handle(), false);
+                            } else if button == MouseButton::Right
+                                && button_state == MouseButtonState::Up
+                            {
+                                show_tray_context_menu(tray.app_handle());
+                            }
+                        }
+                    });
+
+                if let Some(icon) = app.default_window_icon().cloned() {
+                    tray_builder = tray_builder.icon(icon);
+                }
+                let _tray = tray_builder.build(app)?;
+
+                app.on_menu_event(|app, event| match event.id().0.as_str() {
+                    TRAY_SHOW_ID => show_main_window(app, false),
+                    TRAY_SETTINGS_ID => show_main_window(app, true),
+                    TRAY_HIDE_ICON_ID => hide_tray_icon(app),
+                    TRAY_QUIT_ID => app.exit(0),
+                    _ => {}
                 });
 
-            if let Some(icon) = app.default_window_icon().cloned() {
-                tray_builder = tray_builder.icon(icon);
+                listener::spawn(app.handle().clone(), store.clone());
+                sync::start_sync_server(app.handle().clone(), store.clone());
+
+                if let Some(win) = app.get_webview_window("main") {
+                    let w2 = win.clone();
+                    win.on_window_event(move |event| {
+                        if let tauri::WindowEvent::Focused(false) = event {
+                            let _ = w2.hide();
+                        }
+                    });
+                }
+
+                // Check if onboarding has been completed
+                if !store.is_onboarding_completed() {
+                    let _ = commands::open_onboarding_window(app.handle().clone());
+                }
             }
-            let _tray = tray_builder.build(app)?;
 
             app.manage(AppState {
                 store: store.clone(),
                 tray_icon_hidden: std::sync::Mutex::new(false),
             });
-
-            app.on_menu_event(|app, event| match event.id().0.as_str() {
-                TRAY_SHOW_ID => show_main_window(app, false),
-                TRAY_SETTINGS_ID => show_main_window(app, true),
-                TRAY_HIDE_ICON_ID => hide_tray_icon(app),
-                TRAY_QUIT_ID => app.exit(0),
-                _ => {}
-            });
-
-            listener::spawn(app.handle().clone(), store.clone());
-            sync::start_sync_server(app.handle().clone(), store.clone());
-
-            if let Some(win) = app.get_webview_window("main") {
-                let w2 = win.clone();
-                win.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(false) = event {
-                        let _ = w2.hide();
-                    }
-                });
-            }
-
-            // Check if onboarding has been completed
-            if !store.is_onboarding_completed() {
-                let _ = commands::open_onboarding_window(app.handle().clone());
-            }
 
             Ok(())
         })
@@ -173,11 +236,17 @@ pub fn run() {
             commands::remove_paired_device,
             commands::set_sync_enabled,
             commands::set_device_name,
+            commands::receive_remote_text,
+            commands::get_sync_key,
+            commands::add_paired_device,
+            commands::read_image_base64,
+            commands::receive_remote_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn toggle_main_window(app: &AppHandle, open_settings: bool) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) && !open_settings {
@@ -205,7 +274,7 @@ fn get_mouse_point(window: &tauri::WebviewWindow) -> (i32, i32) {
         .unwrap_or((0, 0))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(any(target_os = "android", target_os = "ios"))))]
 fn get_mouse_point(window: &tauri::WebviewWindow) -> (i32, i32) {
     window
         .cursor_position()
@@ -262,7 +331,7 @@ fn get_anchor_point(window: &tauri::WebviewWindow) -> (i32, i32) {
         .unwrap_or((0, 0))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(any(target_os = "android", target_os = "ios"))))]
 fn get_anchor_point(window: &tauri::WebviewWindow) -> (i32, i32) {
     window
         .cursor_position()
@@ -270,6 +339,7 @@ fn get_anchor_point(window: &tauri::WebviewWindow) -> (i32, i32) {
         .unwrap_or((0, 0))
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn show_main_window(app: &AppHandle, open_settings: bool) {
     restore_tray_icon(app);
     focus::remember_foreground_window();
@@ -357,6 +427,7 @@ pub(crate) fn show_main_window(app: &AppHandle, open_settings: bool) {
     }
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn build_tray_menu<M: Manager<tauri::Wry>>(manager: &M) -> tauri::Result<Menu<tauri::Wry>> {
     let tray_show = MenuItem::with_id(manager, TRAY_SHOW_ID, "显示面板", true, None::<&str>)?;
     let tray_settings = MenuItem::with_id(manager, TRAY_SETTINGS_ID, "设置", true, None::<&str>)?;
@@ -381,6 +452,7 @@ fn build_tray_menu<M: Manager<tauri::Wry>>(manager: &M) -> tauri::Result<Menu<ta
     )
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn show_tray_context_menu(app: &AppHandle) {
     let state = app.state::<AppState>();
     let hidden = state.tray_icon_hidden.lock().map(|v| *v).unwrap_or(false);
@@ -397,6 +469,7 @@ fn show_tray_context_menu(app: &AppHandle) {
     }
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn hide_tray_icon(app: &AppHandle) {
     let state = app.state::<AppState>();
     let lock = state.tray_icon_hidden.lock();
@@ -408,6 +481,7 @@ fn hide_tray_icon(app: &AppHandle) {
     }
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn restore_tray_icon(app: &AppHandle) {
     let state = app.state::<AppState>();
     let lock = state.tray_icon_hidden.lock();

@@ -1,0 +1,11 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.clipx" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Status bar & Navigation bar matching app background -->
+        <item name="android:statusBarColor">#f8fafc</item>
+        <item name="android:navigationBarColor">#f8fafc</item>
+        <item name="android:windowBackground">#f8fafc</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">true</item>
+    </style>
+</resources>

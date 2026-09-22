@@ -624,6 +624,32 @@ impl Store {
         )?;
         Ok(())
     }
+
+    pub fn get_or_create_sync_key(&self) -> rusqlite::Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let val: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key='sync_shared_key'", [], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten();
+        if let Some(key) = val {
+            if !key.trim().is_empty() {
+                return Ok(key);
+            }
+        }
+        let new_key = crate::crypto::generate_shared_key();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('sync_shared_key', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value=?1",
+            [&new_key],
+        )?;
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('sync_enabled', '1') \
+             ON CONFLICT(key) DO UPDATE SET value='1'",
+            [],
+        )?;
+        Ok(new_key)
+    }
 }
 
 fn now_ms() -> i64 {

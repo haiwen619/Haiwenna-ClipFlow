@@ -1,7 +1,7 @@
 {
   "name": "haiwenna-clipflow",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "A fluid, modern Windows clipboard manager built with Tauri 2 + Rust + React",
   "license": "MIT",
   "repository": {
@@ -14,13 +14,16 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "node scripts/tauri.mjs"
+    "tauri": "node scripts/tauri.mjs",
+    "build:android": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android.ps1",
+    "build:apk": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-autostart": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-global-shortcut": "^2.2.0",
+    "@zxing/library": "^0.23.0",
     "jsqr": "^1.4.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",

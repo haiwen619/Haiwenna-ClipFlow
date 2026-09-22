@@ -10,11 +10,14 @@ function base64ToBytes(base64: string): Uint8Array {
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const CHUNK_SIZE = 0x8000;
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    chunks.push(
+      String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK_SIZE) as unknown as number[])
+    );
   }
-  return btoa(binary);
+  return btoa(chunks.join(""));
 }
 
 export async function importKey(base64Key: string): Promise<CryptoKey> {
@@ -73,3 +76,11 @@ export async function encryptPayload(
     ciphertext: bytesToBase64(new Uint8Array(encryptedBuffer)),
   };
 }
+
+export async function deriveRoomId(base64Key: string): Promise<string> {
+  const enc = new TextEncoder().encode(base64Key);
+  const hashBuf = await window.crypto.subtle.digest("SHA-256", enc);
+  const hashArr = Array.from(new Uint8Array(hashBuf));
+  return hashArr.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
+

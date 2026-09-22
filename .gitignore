@@ -70,3 +70,15 @@ Desktop.ini
 *.bak
 *.swp
 Untitled*
+*.raw
+
+# Android build outputs & caches
+lib/
+*.so
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/build/
+src-tauri/gen/android/**/build/
+src-tauri/gen/android/.cxx/
+src-tauri/gen/android/**/jniLibs/
+
+

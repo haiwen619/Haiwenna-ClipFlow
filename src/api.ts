@@ -40,6 +40,20 @@ export const api = {
   removePairedDevice: (id: string) => invoke<void>("remove_paired_device", { id }),
   setSyncEnabled: (enabled: boolean) => invoke<void>("set_sync_enabled", { enabled }),
   setDeviceName: (name: string) => invoke<void>("set_device_name", { name }),
+  receiveRemoteText: (text: string, deviceId: string) =>
+    invoke<void>("receive_remote_text", { text, deviceId }),
+  getSyncKey: () => invoke<string>("get_sync_key"),
+  addPairedDevice: (dev: { id: string; name: string; platform: string; sharedKey: string }) =>
+    invoke<void>("add_paired_device", {
+      id: dev.id,
+      name: dev.name,
+      platform: dev.platform,
+      sharedKey: dev.sharedKey,
+    }),
+  readImageBase64: (imagePath: string) =>
+    invoke<string>("read_image_base64", { imagePath }),
+  receiveRemoteImage: (dataUrl: string, deviceId: string) =>
+    invoke<void>("receive_remote_image", { dataUrl, deviceId }),
 };
 
 export async function onClipboardUpdated(cb: () => void): Promise<UnlistenFn> {

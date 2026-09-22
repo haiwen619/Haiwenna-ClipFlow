@@ -1,0 +1,11 @@
+{
+  "identifier": "mobile-capability",
+  "description": "Mobile capabilities",
+  "platforms": ["android", "iOS"],
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "dialog:default"
+  ]
+}

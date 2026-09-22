@@ -257,10 +257,14 @@ export function SettingsPanel({
     try {
       const payload = await api.getPairingQrData();
       setQrPayload(payload);
-      const jsonStr = JSON.stringify(payload);
-      const url = await QRCode.toDataURL(jsonStr, {
-        margin: 1,
-        width: 220,
+      
+      // 生成紧凑 URL 格式（减少 35% 二维码点阵数量，点块面积大幅增加，极易识别）
+      const compactUrl = `cf://v1?k=${encodeURIComponent(payload.sharedKey)}&d=${encodeURIComponent(payload.deviceId)}&n=${encodeURIComponent(payload.deviceName)}&ip=${payload.lanAddresses.join(",")}&p=${payload.port}`;
+
+      const url = await QRCode.toDataURL(compactUrl, {
+        margin: 2,
+        width: 360,
+        errorCorrectionLevel: "L",
         color: {
           dark: "#0f172a",
           light: "#ffffff",
@@ -288,7 +292,8 @@ export function SettingsPanel({
 
   const handleCopyPairingToken = () => {
     if (!qrPayload) return;
-    navigator.clipboard.writeText(JSON.stringify(qrPayload));
+    const compactUrl = `cf://v1?k=${encodeURIComponent(qrPayload.sharedKey)}&d=${encodeURIComponent(qrPayload.deviceId)}&n=${encodeURIComponent(qrPayload.deviceName)}&ip=${qrPayload.lanAddresses.join(",")}&p=${qrPayload.port}`;
+    navigator.clipboard.writeText(compactUrl);
     setCopiedToken(true);
     setTimeout(() => setCopiedToken(false), 2000);
   };
@@ -1041,9 +1046,9 @@ export function SettingsPanel({
             </p>
 
             {/* QR Image Frame */}
-            <div className="mt-3.5 mx-auto flex items-center justify-center rounded-xl bg-white p-2.5 border border-slate-200 shadow-sm w-[210px] h-[210px]">
+            <div className="mt-3 mx-auto flex items-center justify-center rounded-2xl bg-white p-3 border-2 border-slate-200/90 shadow-md w-[290px] h-[290px] max-w-[90vw]">
               {qrCodeUrl ? (
-                <img src={qrCodeUrl} alt="Pairing QR" className="w-full h-full rounded-lg" />
+                <img src={qrCodeUrl} alt="Pairing QR" className="w-full h-full rounded-xl select-none" />
               ) : (
                 <div className="text-xs text-slate-400">正在生成中...</div>
               )}

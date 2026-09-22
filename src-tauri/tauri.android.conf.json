@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Haiwenna ClipFlow Mobile",
+        "url": "mobile.html",
+        "visible": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}

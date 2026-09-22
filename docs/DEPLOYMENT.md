@@ -140,7 +140,98 @@ src-tauri/target/release/bundle/msi/
 - `*.exe`：NSIS 安装包
 - `*.msi`：MSI 安装包
 
-## 7. 配置说明
+## 7. 打包 Android 手机端安装包 (APK)
+
+本项目通过 Tauri 2 支持 Android 客户端，支持局域网内与 Windows 电脑端双向实时 E2EE 加密剪贴板同步。
+
+### 7.1 前置环境准备
+
+在打包 Android 客户端前，需要确保本地具备以下工具：
+
+1. **Java JDK**：推荐 JDK 17 或 21（设置好 `JAVA_HOME` 环境变量）
+2. **Android SDK & NDK**：
+   - 配置好环境变量 `ANDROID_HOME`（例如 `C:\Users\<用户名>\AppData\Local\Android\Sdk`）
+   - 安装 NDK（推荐 r26 或更高版本，设置 `NDK_HOME`）
+   - 安装 Android SDK Platform 34/35/36 及对应版本的 Build-Tools
+3. **Rust Android Target**（按需添加）：
+   ```bash
+   # 为现代真机（64位 ARM，主流机型）添加目标架构
+   rustup target add aarch64-linux-android
+   
+   # 其他架构（可选）：
+   rustup target add armv7-linux-androideabi x86_64-linux-android i686-linux-android
+   ```
+
+### 7.2 常用打包命令
+
+#### ① 快速打包调试版 APK（推荐开发与自测）：
+
+```bash
+pnpm tauri android build --apk --debug
+```
+
+*若只需针对您自己的手机（绝大多数为 64位 ARM 架构）极速构建，可加上 `--target aarch64`，构建速度显著提升：*
+```bash
+pnpm tauri android build --apk --debug --target aarch64
+```
+
+#### ② 打包正式发布版 APK：
+
+```bash
+pnpm tauri android build --apk
+```
+
+#### ③ 使用 Android Studio 打开工程进行可视化打包与签名：
+
+```bash
+pnpm tauri android build --open
+```
+该命令会自动用 Android Studio 打开 `src-tauri/gen/android` 目录，您可以在 IDE 中点击 **Build → Build Bundle(s) / APK(s) → Build APK(s)** 或配置签名打包。
+
+#### ④ 使用原生 Gradle 命令行直接打包：
+
+也可以直接进入 Android 工程目录使用 Gradle 构建：
+```bash
+# 进入 Android 工程目录
+cd src-tauri/gen/android
+
+# 打包 Debug APK
+./gradlew.bat assembleDebug
+
+# 打包 Release APK
+./gradlew.bat assembleRelease
+```
+
+### 7.3 APK 产物路径
+
+打包完成后，APK 安装包通常位于以下路径：
+
+- **Debug 版 APK**：
+  ```text
+  src-tauri/gen/android/app/build/outputs/apk/debug/app-debug.apk
+  ```
+  或者：
+  ```text
+  src-tauri/target/debug/bundle/apk/
+  ```
+- **Release 版 APK**：
+  ```text
+  src-tauri/gen/android/app/build/outputs/apk/release/app-release-unsigned.apk
+  ```
+
+### 7.4 安装到手机
+
+将手机通过 USB 数据线连接电脑，开启手机的「开发者选项」与「USB 调试」：
+
+```bash
+# 方式一：连接手机后直接运行开发模式热重载
+pnpm tauri android dev
+
+# 方式二：使用 adb 命令行直接安装生成的 APK
+adb install src-tauri/gen/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+## 8. 配置说明
 
 主要打包配置在：
 
@@ -298,3 +389,28 @@ pnpm tauri build
 - 系统快捷键接管
 
 这是最容易受系统环境影响的部分。
+
+---
+
+## 14. 移动端 (Android APK) 打包指南
+
+### 一键打包命令
+无需将项目移动或重命名至纯英文目录，在当前工程目录下直接运行：
+
+```bash
+pnpm build:android
+# 或
+pnpm build:apk
+```
+
+### 生成文件路径
+- 构建完成后 APK 自动汇总输出到：`dist/app-universal-debug.apk`
+- 原始输出路径：`src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
+- 该 APK 包含全平台架构（aarch64, armv7, x86, x86_64），可直接安装至任意 Android 设备。
+
+### 技术实现原理
+Android NDK 的 LLVM 链接器（`ld.lld`）在 Windows 环境下解析含中文或特殊字符路径时会报符号与文件不可用错误。项目通过脚本自动配置：
+- `CARGO_TARGET_DIR = F:\@Haiwen\HaiwennaClipFlow`（将 Rust 目标文件定向到纯英文路径，避免占用 C 盘并绕过 NDK 链接器缺陷）
+- `android.overridePathCheck=true`（允许包含非 ASCII 字符的工作区路径）
+- 自动检测并载入 Adoptium JDK 17、Android SDK 及 NDK r27 环境变量。
+

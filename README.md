@@ -1,18 +1,23 @@
 # Haiwenna ClipFlow (海文娜剪贴板)
 
 <p align="center">
-  <strong>一款基于 Tauri 2 + Rust + React 构建的轻量、流畅、贴合光标的 Windows 剪贴板增强工具。</strong>
+  <strong>一款基于 Tauri 2 + Rust + React 构建的轻量、流畅、贴合光标的 Windows 剪贴板增强与跨端加密同步工具。</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/haiwen619/Haiwenna-ClipFlow/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/platform-Windows-0078d4.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/built%20with-Tauri%202%20%7C%20Rust-orange.svg" alt="Tauri">
+  <a href="https://clipflow.haiwenna.me"><img src="https://img.shields.io/badge/Official%20Site-clipflow.haiwenna.me-06B6D4?style=flat-square" alt="Website"></a>
+  <a href="https://github.com/haiwen619/Haiwenna-ClipFlow/releases"><img src="https://img.shields.io/badge/Release-v0.1.2-blue?style=flat-square" alt="Version"></a>
+  <a href="https://github.com/haiwen619/Haiwenna-ClipFlow/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Android-0078d4.svg?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/built%20with-Tauri%202%20%7C%20Rust-orange.svg?style=flat-square" alt="Tauri">
 </p>
+
+> 🌐 **官方主站与在线体验**：[https://clipflow.haiwenna.me](https://clipflow.haiwenna.me)  
+> 📱 **Android Universal APK 下载 (v0.1.2)**：[点击直接下载 APK](https://clipflow.haiwenna.me/app-universal-debug.apk)
 
 ---
 
-**Haiwenna ClipFlow** 专为追求极致输入体验的 Windows 用户打造，融合了 **Emil Kowalski 设计工程手感** 与现代白净美学风格，完美平替与升级系统原生 `Win+V` 剪贴板历史。
+**Haiwenna ClipFlow** 专为追求极致输入体验的 Windows 用户打造，融合了 **Emil Kowalski 设计工程手感** 与现代极简美学风格，完美平替与升级系统原生 `Win+V` 剪贴板历史，并支持与 Android 手机进行零知识端到端加密（E2EE）跨网实时互通（文字与图片全能同频）。
 
 ### ✨ 核心特性
 
@@ -100,6 +105,24 @@ pnpm tauri build
 
 - `src-tauri/target/release/bundle/nsis/`
 - `src-tauri/target/release/bundle/msi/`
+
+### 5. 打包 Android 手机端 (APK)
+
+```bash
+# 快速打包调试版 APK（推荐开发自测）：
+pnpm tauri android build --apk --debug
+
+# 若仅针对您的手机架构（主流 64位 ARM）极速打包：
+pnpm tauri android build --apk --debug --target aarch64
+
+# 正式发布打包：
+pnpm tauri android build --apk
+```
+
+生成 APK 文件路径：
+- `src-tauri/gen/android/app/build/outputs/apk/debug/app-debug.apk`
+
+详细环境配置与 Android Studio 可视化打包说明见 [部署与打包文档](./docs/DEPLOYMENT.md#7-打包-android-手机端安装包-apk)。
 
 ## 运行环境要求
 
