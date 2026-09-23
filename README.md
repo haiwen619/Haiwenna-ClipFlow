@@ -13,7 +13,7 @@
 </p>
 
 > 🌐 **官方主站与在线体验**：[https://clipflow.haiwenna.me](https://clipflow.haiwenna.me)  
-> 📱 **Android Universal APK 下载 (v0.1.2)**：[点击直接下载 APK](https://clipflow.haiwenna.me/app-universal-debug.apk)
+> 📱 **Android Universal APK 下载 (v0.1.2)**：[点击直接下载 APK (27.1MB 深度瘦身版)](https://clipflow.haiwenna.me/app-universal-release.apk)
 
 ---
 

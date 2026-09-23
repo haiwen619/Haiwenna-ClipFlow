@@ -404,9 +404,9 @@ pnpm build:apk
 ```
 
 ### 生成文件路径
-- 构建完成后 APK 自动汇总输出到：`dist/app-universal-debug.apk`
-- 原始输出路径：`src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
-- 该 APK 包含全平台架构（aarch64, armv7, x86, x86_64），可直接安装至任意 Android 设备。
+- 构建完成后 APK 自动汇总输出到：`dist/app-universal-release.apk`（27.1MB 深度优化瘦身版）
+- 原始输出路径：`src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`
+- 该 APK 包含全平台架构（aarch64, armv7, x86, x86_64），已去除未优化调试符号，可直接安装至任意 Android 设备。
 
 ### 技术实现原理
 Android NDK 的 LLVM 链接器（`ld.lld`）在 Windows 环境下解析含中文或特殊字符路径时会报符号与文件不可用错误。项目通过脚本自动配置：

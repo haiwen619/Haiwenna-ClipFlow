@@ -307,12 +307,12 @@ export function WebsiteApp() {
           </a>
 
           <a
-            href="/app-universal-debug.apk"
+            href="/app-universal-release.apk"
             download="ClipFlow-v0.1.2-universal.apk"
             className="flex items-center gap-2.5 rounded-2xl border border-white/10 bg-slate-900/80 hover:bg-slate-800/80 px-6 py-3.5 text-sm font-semibold text-slate-200 shadow-lg backdrop-blur-md hover:-translate-y-0.5 active:translate-y-0 transition"
           >
             <AndroidIcon className="w-5 h-5 text-emerald-400" />
-            <span>下载 Android APK (通用版)</span>
+            <span>下载 Android APK (通用版 27MB)</span>
           </a>
 
           <a
@@ -821,17 +821,17 @@ export function WebsiteApp() {
               </div>
               <div className="flex items-center gap-2">
                 <CheckIcon className="text-emerald-400" />
-                <span>全 CPU 架构通用安装包 (Universal APK)</span>
+                <span>全 CPU 架构通用安装包 (Universal APK，27MB)</span>
               </div>
             </div>
 
             <a
-              href="/app-universal-debug.apk"
+              href="/app-universal-release.apk"
               download="ClipFlow-v0.1.2-universal.apk"
               className="mt-6 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 py-3 text-xs font-bold text-white shadow-lg shadow-emerald-500/20 hover:opacity-95 active:scale-95 transition"
             >
               <AndroidIcon className="w-4 h-4" />
-              <span>下载 Android APK (直链)</span>
+              <span>下载 Android APK (直链 27MB)</span>
             </a>
           </div>
 
