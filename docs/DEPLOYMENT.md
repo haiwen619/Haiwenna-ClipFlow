@@ -410,7 +410,7 @@ pnpm build:apk
 
 ### 技术实现原理
 Android NDK 的 LLVM 链接器（`ld.lld`）在 Windows 环境下解析含中文或特殊字符路径时会报符号与文件不可用错误。项目通过脚本自动配置：
-- `CARGO_TARGET_DIR = F:\@Haiwen\HaiwennaClipFlow`（将 Rust 目标文件定向到纯英文路径，避免占用 C 盘并绕过 NDK 链接器缺陷）
+- `CARGO_TARGET_DIR` 自动重定向至纯英文临时路径（例如 `$env:TEMP\HaiwennaClipFlow`），避免占用系统盘并绕过 NDK 链接器在非 ASCII 路径下的已知缺陷。
 - `android.overridePathCheck=true`（允许包含非 ASCII 字符的工作区路径）
 - 自动检测并载入 Adoptium JDK 17、Android SDK 及 NDK r27 环境变量。
 

@@ -4,29 +4,42 @@ $ErrorActionPreference = "Stop"
 Write-Host "=== Building Haiwenna ClipFlow Android APK ===" -ForegroundColor Cyan
 
 # 1. 确保 Cargo 临时输出目录在纯英文路径，避免 NDK ld.lld 遭遇 Windows GBK 中文路径编码异常
-$cargoTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "F:\@Haiwen\HaiwennaClipFlow" }
+$defaultCargoTarget = Join-Path ([System.IO.Path]::GetTempPath()) "HaiwennaClipFlow"
+$cargoTarget = if ($env:CARGO_TARGET_DIR) { 
+    $env:CARGO_TARGET_DIR 
+} elseif (Test-Path "F:\@Haiwen\HaiwennaClipFlow") { 
+    "F:\@Haiwen\HaiwennaClipFlow" 
+} else { 
+    $defaultCargoTarget 
+}
 if (-not (Test-Path $cargoTarget)) {
     New-Item -ItemType Directory -Path $cargoTarget -Force | Out-Null
 }
 
 $env:CARGO_TARGET_DIR = $cargoTarget
 
-# 2. 补齐 SDK / NDK / JDK 环境变量
+# 2. 动态探测并补齐 SDK / NDK / JDK 环境变量
 if (-not $env:JAVA_HOME) {
-    if (Test-Path "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot") {
-        $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot"
+    $adoptiumJdk = "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot"
+    if (Test-Path $adoptiumJdk) {
+        $env:JAVA_HOME = $adoptiumJdk
     }
 }
 
 if (-not $env:ANDROID_HOME) {
-    if (Test-Path "C:\Users\haiwen\AppData\Local\Android\Sdk") {
-        $env:ANDROID_HOME = "C:\Users\haiwen\AppData\Local\Android\Sdk"
+    $localAndroidSdk = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+    if (Test-Path $localAndroidSdk) {
+        $env:ANDROID_HOME = $localAndroidSdk
     }
 }
 
-if (-not $env:NDK_HOME) {
-    if (Test-Path "C:\Users\haiwen\AppData\Local\Android\Sdk\ndk\27.3.13750724") {
-        $env:NDK_HOME = "C:\Users\haiwen\AppData\Local\Android\Sdk\ndk\27.3.13750724"
+if (-not $env:NDK_HOME -and $env:ANDROID_HOME) {
+    $ndkBase = Join-Path $env:ANDROID_HOME "ndk"
+    if (Test-Path $ndkBase) {
+        $latestNdk = Get-ChildItem -Path $ndkBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
+        if ($latestNdk) {
+            $env:NDK_HOME = $latestNdk.FullName
+        }
     }
 }
 
